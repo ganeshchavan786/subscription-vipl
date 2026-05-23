@@ -39,6 +39,7 @@ const calcEnd = (startDate, period) => {
 const EMPTY_FORM = {
   customer_id: '', product_id: '', price: '', num_users: 1,
   billing_period: 'monthly', start_date: today(),
+  transaction_date: today(),
   auto_renewal: false, payment_status: 'unpaid', notes: '', status: 'active',
   is_user_based: true,
   sub_users: [{ user_name: '', start_date: today(), end_date: '', price: '', description: '' }],
@@ -143,18 +144,19 @@ export default function Subscriptions() {
       ? s.sub_users.map(u => ({ user_name: u.user_name, start_date: u.start_date, end_date: u.end_date, price: u.price || '', description: u.description || '' }))
       : [{ user_name: '', start_date: s.start_date, end_date: s.end_date, price: s.price || '', description: '' }];
     setForm({
-      customer_id:    String(s.customer_id),
-      product_id:     String(s.product_id),
-      price:          s.price,
-      num_users:      existingUsers.length,
-      billing_period: s.billing_period,
-      start_date:     s.start_date,
-      auto_renewal:   !!s.auto_renewal,
-      payment_status: s.payment_status,
-      notes:          s.notes || '',
-      status:         s.status,
-      is_user_based:  s.is_user_based !== 0,
-      sub_users:      existingUsers,
+      customer_id:      String(s.customer_id),
+      product_id:       String(s.product_id),
+      price:            s.price,
+      num_users:        existingUsers.length,
+      billing_period:   s.billing_period,
+      transaction_date: s.transaction_date || s.start_date,
+      start_date:       s.start_date,
+      auto_renewal:     !!s.auto_renewal,
+      payment_status:   s.payment_status,
+      notes:            s.notes || '',
+      status:           s.status,
+      is_user_based:    s.is_user_based !== 0,
+      sub_users:        existingUsers,
     });
     setFormErr(''); setModal(true);
   };
@@ -257,6 +259,7 @@ export default function Subscriptions() {
               <thead>
                 <tr>
                   <th style={{width:32}}></th>
+                  <th>Txn Date</th>
                   <th>Customer</th>
                   <th>Service</th>
                   <th>Users</th>
@@ -279,6 +282,10 @@ export default function Subscriptions() {
                         <td style={{textAlign:'center', cursor:'pointer', color:'var(--text3)', fontSize:'0.8rem'}}
                           onClick={() => setExpandedId(isExpanded ? null : s.id)}>
                           {isExpanded ? '▼' : '▶'}
+                        </td>
+                        <td style={{fontSize:'0.8rem', color:'var(--text2)', whiteSpace:'nowrap'}}>
+                          <div style={{fontWeight:500}}>{s.transaction_date || s.start_date}</div>
+                          <div style={{fontSize:'0.68rem', color:'var(--text3)'}}>Txn Date</div>
                         </td>
                         <td>
                           <div style={{fontWeight:600}}>{s.customer_name}</div>
@@ -313,7 +320,7 @@ export default function Subscriptions() {
                       {/* Expanded user rows */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={9} style={{padding:0, background:'#f8fafc', borderBottom:'2px solid var(--border)'}}>
+                          <td colSpan={10} style={{padding:0, background:'#f8fafc', borderBottom:'2px solid var(--border)'}}>
                             <div style={{padding:'0.75rem 1.5rem 0.75rem 3rem'}}>
                               {s.is_user_based === 0 ? (
                                 // Non-user-based: show contract details
@@ -416,6 +423,29 @@ export default function Subscriptions() {
               <div className="modal-body">
                 {formErr && <div className="form-error">{formErr}</div>}
                 <div className="form-grid">
+
+                  {/* Transaction Date — Tally style voucher date */}
+                  <div style={{
+                    background:'rgba(245,158,11,0.06)',
+                    border:'1px solid rgba(245,158,11,0.25)',
+                    borderRadius:'var(--r)',
+                    padding:'0.75rem 1rem',
+                    display:'flex', alignItems:'center', gap:'1rem'
+                  }}>
+                    <span style={{fontSize:'1.1rem'}}>🧾</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600, fontSize:'0.85rem', color:'var(--text)', marginBottom:'0.4rem'}}>
+                        Transaction Date <span style={{color:'var(--text3)', fontWeight:400, fontSize:'0.78rem'}}>(Voucher Date — je diwshi deal/payment zali)</span>
+                      </div>
+                      <input
+                        className="form-input"
+                        type="date"
+                        value={form.transaction_date}
+                        onChange={f('transaction_date')}
+                        style={{maxWidth:200, marginBottom:0}}
+                      />
+                    </div>
+                  </div>
 
                   {/* Customer + Product */}
                   <div className="form-row-2">
