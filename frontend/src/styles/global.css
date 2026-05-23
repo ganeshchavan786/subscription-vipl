@@ -864,10 +864,97 @@ body {
 /* ══════════════════════════════════════════
    RESPONSIVE
 ══════════════════════════════════════════ */
+
+/* Mobile menu toggle button */
+.mobile-menu-btn {
+  display: none;
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 300;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  padding: 0.5rem 0.65rem;
+  cursor: pointer;
+  font-size: 1.1rem;
+  box-shadow: var(--shadow);
+  line-height: 1;
+}
+
+/* Sidebar overlay on mobile */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 199;
+  backdrop-filter: blur(2px);
+}
+
 @media (max-width: 768px) {
-  .sidebar { transform: translateX(-100%); }
+  /* Show mobile menu button */
+  .mobile-menu-btn { display: block; }
+  .sidebar-overlay.open { display: block; }
+
+  /* Sidebar hidden by default, slides in */
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 250;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0,0,0,0.2);
+  }
+
+  /* Page content full width */
   .page-content { margin-left: 0; }
+
+  /* Page header padding */
+  .page-header {
+    padding: 1rem 1rem 1rem;
+    padding-top: 3.5rem;
+  }
+  .page-body { padding: 1rem 1rem 2rem; }
+
+  /* Stats grid 2 columns */
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 0.65rem; }
+
+  /* Form 2-col → 1-col */
   .form-row-2 { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .page-header, .page-body { padding-left: 1.25rem; padding-right: 1.25rem; }
+
+  /* Table horizontal scroll */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .data-table { min-width: 600px; }
+
+  /* Modal full screen on mobile */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    max-width: 100% !important;
+    max-height: 92vh;
+  }
+
+  /* Search box full width */
+  .search-box input { width: 100%; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar-left { flex-direction: column; }
+
+  /* Period pills wrap */
+  .period-pills { gap: 0.35rem; }
+  .period-pill { font-size: 0.75rem; padding: 0.35rem 0.7rem; }
+
+  /* Page title smaller */
+  .page-title { font-size: 1.15rem; }
+
+  /* Buttons smaller */
+  .btn-primary { padding: 0.55rem 0.9rem; font-size: 0.82rem; }
+}
+
+@media (max-width: 480px) {
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+  .stat-card { padding: 0.9rem; }
+  .stat-card-val { font-size: 1.35rem; }
+  .page-header { gap: 0.65rem; }
 }
