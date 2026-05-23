@@ -1,0 +1,634 @@
+// server.js — Full Backend: Auth + Products + Customers + Subscriptions
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Database } = require('node-sqlite3-wasm');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
+const XLSX = require('xlsx');
+
+const upload = multer({ storage: multer.memoryStorage() });
+
+const app = express();
+const PORT = 3251;
+const JWT_SECRET = 'change_this_in_production_please';
+
+// ─── DATABASE SETUP ───────────────────────────────────────────────────────────
+const DB_PATH = path.join(__dirname, 'database.db');
+const db = new Database(DB_PATH);
+
+db.exec(`PRAGMA journal_mode = WAL`);
+db.exec(`PRAGMA foreign_keys = ON`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    email       TEXT    UNIQUE NOT NULL,
+    password    TEXT    NOT NULL,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS products (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    name        TEXT    NOT NULL,
+    price       REAL    NOT NULL DEFAULT 0,
+    quantity    INTEGER NOT NULL DEFAULT 0,
+    description TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS customers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    name        TEXT    NOT NULL,
+    email       TEXT,
+    phone       TEXT,
+    notes       TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS subscriptions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    customer_id    INTEGER NOT NULL,
+    product_id     INTEGER NOT NULL,
+    price          REAL    NOT NULL DEFAULT 0,
+    num_users      INTEGER NOT NULL DEFAULT 1,
+    billing_period TEXT    NOT NULL DEFAULT 'monthly',
+    start_date     TEXT    NOT NULL,
+    end_date       TEXT    NOT NULL,
+    status         TEXT    NOT NULL DEFAULT 'active',
+    auto_renewal   INTEGER NOT NULL DEFAULT 0,
+    payment_status TEXT    NOT NULL DEFAULT 'unpaid',
+    notes          TEXT,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id)     REFERENCES users(id)     ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id)  REFERENCES products(id)  ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS subscription_users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL,
+    user_name       TEXT    NOT NULL,
+    start_date      TEXT    NOT NULL,
+    end_date        TEXT    NOT NULL,
+    price           REAL    NOT NULL DEFAULT 0,
+    description     TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+  );
+`);
+
+// Save DB to file on process exit
+process.on('exit', () => { try { db.close(); } catch(e) {} });
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
+
+// Migrate: add num_users column if not exists
+try {
+  db.exec(`ALTER TABLE subscriptions ADD COLUMN num_users INTEGER NOT NULL DEFAULT 1`);
+} catch(e) {}
+
+// Migrate: add is_user_based column to subscriptions if not exists
+try {
+  db.exec(`ALTER TABLE subscriptions ADD COLUMN is_user_based INTEGER NOT NULL DEFAULT 1`);
+  console.log('✅ Migrated: is_user_based column added');
+} catch(e) {}
+
+// Migrate: add price column to subscription_users if not exists
+try {
+  db.exec(`ALTER TABLE subscription_users ADD COLUMN price REAL NOT NULL DEFAULT 0`);
+  console.log('✅ Migrated: subscription_users.price column added');
+} catch(e) {}
+
+// Migrate: add description column to subscription_users if not exists
+try {
+  db.exec(`ALTER TABLE subscription_users ADD COLUMN description TEXT`);
+  console.log('✅ Migrated: subscription_users.description column added');
+} catch(e) {}
+
+console.log('✅ Database ready');
+
+// ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
+app.use(cors({ origin: 'http://localhost:3252', credentials: true }));
+app.use(express.json());
+
+const auth = (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1];
+  if (!token) return res.status(401).json({ message: 'Token required.' });
+  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
+  catch { res.status(403).json({ message: 'Invalid token.' }); }
+};
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const calcEndDate = (startDate, period) => {
+  const d = new Date(startDate);
+  switch (period) {
+    case 'daily':        d.setDate(d.getDate() + 1);       break;
+    case 'monthly':      d.setMonth(d.getMonth() + 1);     break;
+    case 'quarterly':    d.setMonth(d.getMonth() + 3);     break;
+    case 'half_yearly':  d.setMonth(d.getMonth() + 6);     break;
+    case 'yearly':       d.setFullYear(d.getFullYear() + 1); break;
+    default:             d.setMonth(d.getMonth() + 1);
+  }
+  return d.toISOString().split('T')[0];
+};
+
+const syncStatus = () => {
+  const today = new Date().toISOString().split('T')[0];
+  db.run(`UPDATE subscriptions SET status='expired' WHERE end_date < ? AND status='active'`, [today]);
+};
+
+// ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ message: 'All fields required.' });
+    if (password.length < 6) return res.status(400).json({ message: 'Password min 6 characters.' });
+    if (db.get('SELECT id FROM users WHERE email=?', [email.toLowerCase()]))
+      return res.status(409).json({ message: 'Email already registered.' });
+    const hashed = await bcrypt.hash(password, 10);
+    db.run('INSERT INTO users (name,email,password) VALUES (?,?,?)', [name, email.toLowerCase(), hashed]);
+    const user = db.get('SELECT * FROM users WHERE email=?', [email.toLowerCase()]);
+    const token = jwt.sign({ id: user.id, name, email }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ message: 'Registered!', token, user: { id: user.id, name, email } });
+  } catch(e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email and password required.' });
+    const user = db.get('SELECT * FROM users WHERE email=?', [email.toLowerCase()]);
+    if (!user || !(await bcrypt.compare(password, user.password)))
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    const token = jwt.sign({ id: user.id, name: user.name, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ message: 'Login successful!', token, user: { id: user.id, name: user.name, email: user.email } });
+  } catch(e) { console.error(e); res.status(500).json({ message: 'Server error.' }); }
+});
+
+// ─── DASHBOARD STATS ──────────────────────────────────────────────────────────
+app.get('/api/stats', auth, (req, res) => {
+  syncStatus();
+  const uid = req.user.id;
+  const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+  const in7str = in7.toISOString().split('T')[0];
+
+  const active         = db.get(`SELECT COUNT(*) as c FROM subscriptions WHERE user_id=? AND status='active'`, [uid]).c;
+  const expiringSoon   = db.get(`SELECT COUNT(*) as c FROM subscriptions WHERE user_id=? AND status='active' AND end_date<=?`, [uid, in7str]).c;
+  const totalCustomers = db.get(`SELECT COUNT(*) as c FROM customers WHERE user_id=?`, [uid]).c;
+  const totalProducts  = db.get(`SELECT COUNT(*) as c FROM products WHERE user_id=?`, [uid]).c;
+
+  const subs = db.all(`SELECT price, billing_period FROM subscriptions WHERE user_id=? AND status='active'`, [uid]);
+  const periodToMonths = { daily: 1/30, monthly: 1, quarterly: 1/3, half_yearly: 1/6, yearly: 1/12 };
+  const mrr = subs.reduce((sum, s) => sum + s.price * (periodToMonths[s.billing_period] || 1), 0);
+
+  const unpaidCount = db.get(`SELECT COUNT(*) as c FROM subscriptions WHERE user_id=? AND payment_status='unpaid' AND status='active'`, [uid]).c;
+
+  res.json({ stats: { active, expiringSoon, totalCustomers, totalProducts, mrr: Math.round(mrr), unpaidCount } });
+});
+
+// ─── PRODUCTS CRUD ────────────────────────────────────────────────────────────
+app.get('/api/products', auth, (req, res) => {
+  const { search } = req.query;
+  let q = 'SELECT * FROM products WHERE user_id=?';
+  const p = [req.user.id];
+  if (search) { q += ' AND (name LIKE ? OR description LIKE ?)'; p.push(`%${search}%`, `%${search}%`); }
+  res.json({ products: db.all(q + ' ORDER BY name', p) });
+});
+
+app.post('/api/products', auth, (req, res) => {
+  const { name, price, quantity, description } = req.body;
+  if (!name) return res.status(400).json({ message: 'Product name required.' });
+  db.run('INSERT INTO products (user_id,name,price,quantity,description) VALUES (?,?,?,?,?)',
+    [req.user.id, name.trim(), price||0, quantity||0, description||'']);
+  const product = db.get('SELECT * FROM products WHERE rowid=last_insert_rowid()');
+  res.status(201).json({ product });
+});
+
+app.put('/api/products/:id', auth, (req, res) => {
+  const { name, price, quantity, description } = req.body;
+  if (!name) return res.status(400).json({ message: 'Product name required.' });
+  const exists = db.get('SELECT id FROM products WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Product not found.' });
+  db.run('UPDATE products SET name=?,price=?,quantity=?,description=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?',
+    [name.trim(), price||0, quantity||0, description||'', req.params.id, req.user.id]);
+  res.json({ product: db.get('SELECT * FROM products WHERE id=?', [req.params.id]) });
+});
+
+app.delete('/api/products/:id', auth, (req, res) => {
+  const exists = db.get('SELECT id FROM products WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Product not found.' });
+  db.run('DELETE FROM products WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  res.json({ message: 'Deleted.' });
+});
+
+// ─── CUSTOMERS CRUD ───────────────────────────────────────────────────────────
+app.get('/api/customers', auth, (req, res) => {
+  const { search } = req.query;
+  let q = 'SELECT * FROM customers WHERE user_id=?';
+  const p = [req.user.id];
+  if (search) { q += ' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)'; p.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  res.json({ customers: db.all(q + ' ORDER BY name', p) });
+});
+
+app.post('/api/customers', auth, (req, res) => {
+  const { name, email, phone, notes } = req.body;
+  if (!name) return res.status(400).json({ message: 'Customer name required.' });
+  db.run('INSERT INTO customers (user_id,name,email,phone,notes) VALUES (?,?,?,?,?)',
+    [req.user.id, name.trim(), email||'', phone||'', notes||'']);
+  const customer = db.get('SELECT * FROM customers WHERE rowid=last_insert_rowid()');
+  res.status(201).json({ customer });
+});
+
+app.put('/api/customers/:id', auth, (req, res) => {
+  const { name, email, phone, notes } = req.body;
+  if (!name) return res.status(400).json({ message: 'Customer name required.' });
+  const exists = db.get('SELECT id FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Customer not found.' });
+  db.run('UPDATE customers SET name=?,email=?,phone=?,notes=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?',
+    [name.trim(), email||'', phone||'', notes||'', req.params.id, req.user.id]);
+  res.json({ customer: db.get('SELECT * FROM customers WHERE id=?', [req.params.id]) });
+});
+
+app.delete('/api/customers/:id', auth, (req, res) => {
+  const exists = db.get('SELECT id FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Customer not found.' });
+  db.run('DELETE FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  res.json({ message: 'Deleted.' });
+});
+
+// ─── SUBSCRIPTIONS CRUD ───────────────────────────────────────────────────────
+app.get('/api/subscriptions', auth, (req, res) => {
+  syncStatus();
+  const { status, payment_status, search } = req.query;
+  let q = `
+    SELECT s.*, c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
+           p.name as product_name
+    FROM subscriptions s
+    JOIN customers c ON s.customer_id = c.id
+    JOIN products  p ON s.product_id  = p.id
+    WHERE s.user_id = ?
+  `;
+  const params = [req.user.id];
+  if (status)         { q += ' AND s.status=?';         params.push(status); }
+  if (payment_status) { q += ' AND s.payment_status=?'; params.push(payment_status); }
+  if (search)         { q += ' AND (c.name LIKE ? OR p.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
+  q += ' ORDER BY s.end_date ASC';
+  const subs = db.all(q, params);
+
+  // Attach subscription_users to each subscription
+  const result = subs.map(s => ({
+    ...s,
+    sub_users: db.all('SELECT * FROM subscription_users WHERE subscription_id=? ORDER BY start_date ASC', [s.id])
+  }));
+
+  res.json({ subscriptions: result });
+});
+
+app.post('/api/subscriptions', auth, (req, res) => {
+  try {
+    const { customer_id, product_id, price, num_users, billing_period, start_date, auto_renewal, payment_status, notes, sub_users, is_user_based } = req.body;
+    if (!customer_id || !product_id) return res.status(400).json({ message: 'Customer and product required.' });
+    if (!start_date) return res.status(400).json({ message: 'Start date required.' });
+
+    const validPeriods = ['daily','monthly','quarterly','half_yearly','yearly'];
+    if (!validPeriods.includes(billing_period)) return res.status(400).json({ message: 'Invalid billing period.' });
+
+    const end_date = calcEndDate(start_date, billing_period);
+    const today = new Date().toISOString().split('T')[0];
+    const status = end_date < today ? 'expired' : 'active';
+    const userBased = is_user_based ? 1 : 0;
+
+    db.run(`INSERT INTO subscriptions (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [req.user.id, customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, status, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased]);
+
+    const newSub = db.get('SELECT id FROM subscriptions WHERE rowid=last_insert_rowid()');
+    const subId = newSub.id;
+
+    // Save sub_users only if user-based
+    if (userBased && Array.isArray(sub_users)) {
+      for (const u of sub_users) {
+        if (u.user_name && u.start_date && u.end_date) {
+          db.run('INSERT INTO subscription_users (subscription_id,user_name,start_date,end_date,price,description) VALUES (?,?,?,?,?,?)',
+            [subId, u.user_name.trim(), u.start_date, u.end_date, parseFloat(u.price)||0, u.description||'']);
+        }
+      }
+    }
+
+    const sub = db.get(`
+      SELECT s.*, c.name as customer_name, p.name as product_name
+      FROM subscriptions s JOIN customers c ON s.customer_id=c.id JOIN products p ON s.product_id=p.id
+      WHERE s.id=?`, [subId]);
+    sub.sub_users = db.all('SELECT * FROM subscription_users WHERE subscription_id=?', [subId]);
+
+    res.status(201).json({ message: 'Subscription created!', subscription: sub });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error.' });
+  }
+});
+
+app.put('/api/subscriptions/:id', auth, (req, res) => {
+  try {
+    const exists = db.get('SELECT id FROM subscriptions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!exists) return res.status(404).json({ message: 'Subscription not found.' });
+
+    const { customer_id, product_id, price, num_users, billing_period, start_date, auto_renewal, payment_status, notes, status, sub_users, is_user_based } = req.body;
+    const end_date = calcEndDate(start_date, billing_period);
+    const today = new Date().toISOString().split('T')[0];
+    const computedStatus = status === 'cancelled' ? 'cancelled' : (end_date < today ? 'expired' : 'active');
+    const userBased = is_user_based ? 1 : 0;
+
+    db.run(`UPDATE subscriptions SET customer_id=?,product_id=?,price=?,num_users=?,billing_period=?,start_date=?,end_date=?,
+      status=?,auto_renewal=?,payment_status=?,notes=?,is_user_based=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?`,
+      [customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, computedStatus, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased, req.params.id, req.user.id]);
+
+    // Replace sub_users only if user-based
+    db.run('DELETE FROM subscription_users WHERE subscription_id=?', [req.params.id]);
+    if (userBased && Array.isArray(sub_users)) {
+      for (const u of sub_users) {
+        if (u.user_name && u.start_date && u.end_date) {
+          db.run('INSERT INTO subscription_users (subscription_id,user_name,start_date,end_date,price,description) VALUES (?,?,?,?,?,?)',
+            [req.params.id, u.user_name.trim(), u.start_date, u.end_date, parseFloat(u.price)||0, u.description||'']);
+        }
+      }
+    }
+
+    const sub = db.get(`
+      SELECT s.*, c.name as customer_name, p.name as product_name
+      FROM subscriptions s JOIN customers c ON s.customer_id=c.id JOIN products p ON s.product_id=p.id
+      WHERE s.id=?`, [req.params.id]);
+    sub.sub_users = db.all('SELECT * FROM subscription_users WHERE subscription_id=?', [req.params.id]);
+
+    res.json({ message: 'Updated!', subscription: sub });
+  } catch (err) { console.error(err); res.status(500).json({ message: 'Server error.' }); }
+});
+
+app.delete('/api/subscriptions/:id', auth, (req, res) => {
+  const exists = db.get('SELECT id FROM subscriptions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Not found.' });
+  db.run('DELETE FROM subscriptions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  res.json({ message: 'Deleted.' });
+});
+
+// Renew a subscription
+app.post('/api/subscriptions/:id/renew', auth, (req, res) => {
+  const sub = db.get('SELECT * FROM subscriptions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!sub) return res.status(404).json({ message: 'Not found.' });
+  const newEnd = calcEndDate(sub.end_date, sub.billing_period);
+  db.run(`UPDATE subscriptions SET end_date=?,status='active',payment_status='unpaid',updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+    [newEnd, sub.id]);
+  res.json({ message: 'Renewed!', end_date: newEnd });
+});
+
+// Import Subscriptions from Excel (2-sheet format)
+app.post('/api/import/subscriptions', auth, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+
+    // Sheet 1: Subscriptions
+    const ws1 = wb.Sheets['Subscriptions'] || wb.Sheets[wb.SheetNames[0]];
+    const subRows = XLSX.utils.sheet_to_json(ws1, { defval: '' });
+
+    // Sheet 2: Subscription_Users (optional)
+    const ws2 = wb.Sheets['Subscription_Users'] || wb.Sheets[wb.SheetNames[1]];
+    const userRows = ws2 ? XLSX.utils.sheet_to_json(ws2, { defval: '' }) : [];
+
+    if (subRows.length === 0) return res.status(400).json({ message: 'Subscriptions sheet is empty.' });
+
+    let inserted = 0, skipped = 0, errors = [];
+
+    for (const row of subRows) {
+      try {
+        const ref            = String(row['ref'] || row['Ref'] || '').trim();
+        const customerName   = String(row['customer_name'] || row['Customer'] || '').trim();
+        const productName    = String(row['product_name']  || row['Product']  || '').trim();
+        const billingPeriod  = String(row['billing_period'] || 'monthly').trim().toLowerCase();
+        const price          = parseFloat(row['price'] || 0) || 0;
+        const paymentStatus  = String(row['payment_status'] || 'unpaid').trim().toLowerCase();
+        const autoRenewal    = ['yes','true','1'].includes(String(row['auto_renewal']).toLowerCase()) ? 1 : 0;
+        const isUserBased    = ['yes','true','1'].includes(String(row['is_user_based']).toLowerCase()) ? 1 : 0;
+        const startDate      = String(row['start_date'] || '').trim();
+        const notes          = String(row['notes'] || '').trim();
+
+        if (!customerName) { skipped++; errors.push(`Row ${ref||'?'}: customer_name missing`); continue; }
+        if (!productName)  { skipped++; errors.push(`Row ${ref||'?'}: product_name missing`); continue; }
+        if (!startDate)    { skipped++; errors.push(`Row ${ref||'?'}: start_date missing`); continue; }
+
+        // Find customer
+        const customer = db.get(
+          `SELECT id FROM customers WHERE user_id=? AND name LIKE ?`,
+          [req.user.id, `%${customerName}%`]
+        );
+        if (!customer) { skipped++; errors.push(`"${customerName}": customer not found — add customer first`); continue; }
+
+        // Find product
+        const product = db.get(
+          `SELECT id,price FROM products WHERE user_id=? AND name LIKE ?`,
+          [req.user.id, `%${productName}%`]
+        );
+        if (!product) { skipped++; errors.push(`"${productName}": product not found — add product first`); continue; }
+
+        // Validate billing period
+        const validPeriods = ['daily','monthly','quarterly','half_yearly','yearly'];
+        const bp = validPeriods.includes(billingPeriod) ? billingPeriod : 'monthly';
+
+        // Calculate end date
+        const endDate = calcEndDate(startDate, bp);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const status = endDate < todayStr ? 'expired' : 'active';
+        const finalPrice = price || product.price || 0;
+
+        // Get users for this ref
+        const subUsers = ref ? userRows.filter(u =>
+          String(u['subscription_ref'] || u['ref'] || '').trim() === ref
+        ) : [];
+
+        const numUsers = isUserBased ? (subUsers.length || 1) : 0;
+
+        // Insert subscription
+        db.run(`INSERT INTO subscriptions
+          (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.user.id, customer.id, product.id, finalPrice, numUsers, bp, startDate, endDate, status, autoRenewal, paymentStatus, notes, isUserBased]);
+
+        const newSub = db.get('SELECT id FROM subscriptions WHERE rowid=last_insert_rowid()');
+        const subId = newSub.id;
+
+        // Insert sub_users
+        if (isUserBased && subUsers.length > 0) {
+          for (const u of subUsers) {
+            const uName  = String(u['user_name'] || u['name'] || '').trim();
+            const uStart = String(u['start_date'] || startDate).trim();
+            const uEnd   = String(u['end_date']   || endDate).trim();
+            const uPrice = parseFloat(u['price'] || 0) || 0;
+            const uDesc  = String(u['description'] || '').trim();
+            if (uName) {
+              db.run('INSERT INTO subscription_users (subscription_id,user_name,start_date,end_date,price,description) VALUES (?,?,?,?,?,?)',
+                [subId, uName, uStart, uEnd, uPrice, uDesc]);
+            }
+          }
+        }
+
+        inserted++;
+      } catch(e) {
+        skipped++;
+        errors.push(`Row error: ${e.message}`);
+      }
+    }
+
+    res.json({ message: `Import done! ${inserted} subscriptions added, ${skipped} skipped.`, inserted, skipped, errors });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ message: 'Failed to parse Excel file.' });
+  }
+});
+
+// Download subscription import template
+app.get('/api/import/template/subscriptions', auth, (req, res) => {
+  const wb = XLSX.utils.book_new();
+
+  const subHeaders = ['ref','customer_name','product_name','billing_period','price','payment_status','auto_renewal','is_user_based','start_date','notes'];
+  const subSample  = [
+    ['S001','Customer Name Here','Product Name Here','yearly','5000','paid','yes','no','2026-04-01','AMC contract'],
+    ['S002','Customer Name Here','Tally Prime Single User','yearly','13500','unpaid','yes','yes','2026-04-01','Single user'],
+    ['S003','Customer Name Here','Tally Prime Multi User (5)','yearly','38000','paid','yes','yes','2026-04-01','5 users'],
+  ];
+  const ws1 = XLSX.utils.aoa_to_sheet([subHeaders, ...subSample]);
+  ws1['!cols'] = subHeaders.map((_,i) => ({ wch: [6,28,28,14,8,14,12,12,12,30][i] }));
+  XLSX.utils.book_append_sheet(wb, ws1, 'Subscriptions');
+
+  const userHeaders = ['subscription_ref','user_name','start_date','end_date','price','description'];
+  const userSample  = [
+    ['S002','Rahul Sharma','2026-04-01','2027-03-31','13500','Main user'],
+    ['S003','Priya Desai','2026-04-01','2027-03-31','8000','Admin'],
+    ['S003','Amit Kulkarni','2026-05-01','2027-04-30','7500','Accounts'],
+    ['S003','Sneha More','2026-06-01','2027-05-31','7500','HR'],
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet([userHeaders, ...userSample]);
+  ws2['!cols'] = [{wch:16},{wch:22},{wch:12},{wch:12},{wch:8},{wch:40}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Subscription_Users');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename="subscriptions_template.xlsx"');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
+// Download sample templates
+app.get('/api/import/template/:type', auth, (req, res) => {
+  const { type } = req.params;
+  let headers = [];
+  let sample = [];
+
+  if (type === 'customers') {
+    headers = ['name', 'email', 'phone', 'notes'];
+    sample  = [['Vrushali Infotech', 'info@vrushali.com', '9876543210', 'Premium client'],
+               ['Ganesh Traders', 'ganesh@traders.com', '9123456789', '']];
+  } else if (type === 'products') {
+    headers = ['name', 'price', 'quantity', 'description'];
+    sample  = [['Tally Prime', '13500', '10', 'Accounting software'],
+               ['AMC Contract', '5000', '0', 'Annual maintenance']];
+  } else {
+    return res.status(400).json({ message: 'Invalid type. Use customers or products.' });
+  }
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...sample]);
+  // Column widths
+  ws['!cols'] = headers.map(() => ({ wch: 22 }));
+  XLSX.utils.book_append_sheet(wb, ws, type);
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', `attachment; filename="${type}_template.xlsx"`);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.send(buf);
+});
+
+// Import Customers from Excel
+app.post('/api/import/customers', auth, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (rows.length === 0) return res.status(400).json({ message: 'Excel file is empty.' });
+
+    let inserted = 0, skipped = 0, errors = [];
+
+    for (const row of rows) {
+      const name  = String(row['name'] || row['Name'] || '').trim();
+      const email = String(row['email'] || row['Email'] || '').trim().toLowerCase();
+      const phone = String(row['phone'] || row['Phone'] || '').trim();
+      const notes = String(row['notes'] || row['Notes'] || '').trim();
+
+      if (!name) { skipped++; errors.push(`Row skipped: name is empty`); continue; }
+
+      try {
+        db.run('INSERT INTO customers (user_id,name,email,phone,notes) VALUES (?,?,?,?,?)',
+          [req.user.id, name, email, phone, notes]);
+        inserted++;
+      } catch(e) {
+        skipped++;
+        errors.push(`"${name}" skipped: ${e.message}`);
+      }
+    }
+
+    res.json({ message: `Import done! ${inserted} added, ${skipped} skipped.`, inserted, skipped, errors });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ message: 'Failed to parse Excel file. Make sure it is a valid .xlsx file.' });
+  }
+});
+
+// Import Products from Excel
+app.post('/api/import/products', auth, upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (rows.length === 0) return res.status(400).json({ message: 'Excel file is empty.' });
+
+    let inserted = 0, skipped = 0, errors = [];
+
+    for (const row of rows) {
+      const name        = String(row['name'] || row['Name'] || '').trim();
+      const price       = parseFloat(row['price'] || row['Price'] || 0) || 0;
+      const quantity    = parseInt(row['quantity'] || row['Quantity'] || 0) || 0;
+      const description = String(row['description'] || row['Description'] || '').trim();
+
+      if (!name) { skipped++; errors.push(`Row skipped: name is empty`); continue; }
+
+      try {
+        db.run('INSERT INTO products (user_id,name,price,quantity,description) VALUES (?,?,?,?,?)',
+          [req.user.id, name, price, quantity, description]);
+        inserted++;
+      } catch(e) {
+        skipped++;
+        errors.push(`"${name}" skipped: ${e.message}`);
+      }
+    }
+
+    res.json({ message: `Import done! ${inserted} added, ${skipped} skipped.`, inserted, skipped, errors });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ message: 'Failed to parse Excel file.' });
+  }
+});
+
+app.listen(PORT, () => console.log(`🚀 Server running: http://localhost:${PORT}`));
