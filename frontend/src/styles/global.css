@@ -907,7 +907,6 @@ body {
     transform: translateX(0);
     box-shadow: 4px 0 24px rgba(0,0,0,0.2);
   }
-
   /* Page content full width */
   .page-content { margin-left: 0; }
 

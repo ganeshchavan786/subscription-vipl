@@ -247,6 +247,27 @@ app.get('/api/customers', auth, (req, res) => {
 app.post('/api/customers', auth, (req, res) => {
   const { name, email, phone, notes } = req.body;
   if (!name) return res.status(400).json({ message: 'Customer name required.' });
+
+  // Duplicate check — same name + phone
+  const dupByPhone = phone
+    ? db.get('SELECT id FROM customers WHERE user_id=? AND LOWER(name)=LOWER(?) AND phone=?',
+        [req.user.id, name.trim(), phone.trim()])
+    : null;
+  if (dupByPhone) return res.status(409).json({ message: `Customer "${name}" with this phone already exists.` });
+
+  // Duplicate check — same email
+  const dupByEmail = email
+    ? db.get('SELECT id FROM customers WHERE user_id=? AND LOWER(email)=LOWER(?)',
+        [req.user.id, email.trim()])
+    : null;
+  if (dupByEmail) return res.status(409).json({ message: `A customer with email "${email}" already exists.` });
+
+  // Duplicate check — same name (warn but allow if no phone/email match)
+  const dupByName = db.get('SELECT id FROM customers WHERE user_id=? AND LOWER(name)=LOWER(?)',
+    [req.user.id, name.trim()]);
+  if (dupByName && !phone && !email)
+    return res.status(409).json({ message: `Customer "${name}" already exists. Add phone or email to differentiate.` });
+
   db.run('INSERT INTO customers (user_id,name,email,phone,notes) VALUES (?,?,?,?,?)',
     [req.user.id, name.trim(), email||'', phone||'', notes||'']);
   const customer = db.get('SELECT * FROM customers WHERE rowid=last_insert_rowid()');
@@ -581,6 +602,10 @@ app.post('/api/import/customers', auth, upload.single('file'), (req, res) => {
       const notes = String(row['notes'] || row['Notes'] || '').trim();
 
       if (!name) { skipped++; errors.push(`Row skipped: name is empty`); continue; }
+
+      // Duplicate check
+      const dup = db.get(`SELECT id FROM customers WHERE user_id=? AND LOWER(name)=LOWER(?)`, [req.user.id, name]);
+      if (dup) { skipped++; errors.push(`"${name}" skipped: already exists`); continue; }
 
       try {
         db.run('INSERT INTO customers (user_id,name,email,phone,notes) VALUES (?,?,?,?,?)',
