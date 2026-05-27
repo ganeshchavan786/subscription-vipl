@@ -554,6 +554,122 @@ app.get('/api/import/template/subscriptions', auth, (req, res) => {
   res.send(buf);
 });
 
+// ─── REPORTS ─────────────────────────────────────────────────────────────────
+
+// Customer Renewal History — year-wise per customer+product
+app.get('/api/reports/renewal-history', auth, (req, res) => {
+  syncStatus();
+  const uid = req.user.id;
+  const { customer_id, product_id } = req.query;
+
+  let q = `
+    SELECT s.id, s.customer_id, s.product_id, s.start_date, s.end_date,
+           s.price, s.status, s.payment_status, s.transaction_date,
+           c.name as customer_name, c.phone as customer_phone,
+           p.name as product_name
+    FROM subscriptions s
+    JOIN customers c ON s.customer_id = c.id
+    JOIN products  p ON s.product_id  = p.id
+    WHERE s.user_id = ?
+  `;
+  const params = [uid];
+  if (customer_id) { q += ' AND s.customer_id=?'; params.push(customer_id); }
+  if (product_id)  { q += ' AND s.product_id=?';  params.push(product_id); }
+  q += ' ORDER BY s.customer_id, s.product_id, s.start_date ASC';
+
+  const rows = db.all(q, params);
+
+  const grouped = {};
+  for (const row of rows) {
+    const key = `${row.customer_id}_${row.product_id}`;
+    if (!grouped[key]) {
+      grouped[key] = {
+        customer_id: row.customer_id, customer_name: row.customer_name,
+        customer_phone: row.customer_phone, product_id: row.product_id,
+        product_name: row.product_name, subscriptions: [],
+      };
+    }
+    grouped[key].subscriptions.push({
+      id: row.id, start_date: row.start_date, end_date: row.end_date,
+      year: new Date(row.start_date).getFullYear(),
+      price: row.price, status: row.status,
+      payment_status: row.payment_status, transaction_date: row.transaction_date,
+    });
+  }
+
+  const result = Object.values(grouped).map(g => {
+    const subs = g.subscriptions;
+    const years = subs.map(s => s.year);
+    const minYear = Math.min(...years);
+    const maxYear = new Date().getFullYear();
+    const allYears = [];
+    for (let y = minYear; y <= maxYear; y++) allYears.push(y);
+
+    const yearMap = {};
+    for (const y of allYears) {
+      const sub = subs.find(s => s.year === y);
+      yearMap[y] = sub ? { ...sub, found: true } : { year: y, found: false, status: 'missed' };
+    }
+
+    const activeYears  = subs.filter(s => s.status !== 'cancelled').length;
+    const missedYears  = allYears.filter(y => !yearMap[y].found).length;
+    const totalRevenue = subs.reduce((sum, s) => sum + (s.price || 0), 0);
+    const lastSub      = subs[subs.length - 1];
+    const isActive     = lastSub?.status === 'active';
+
+    let streak = 0;
+    for (let y = maxYear; y >= minYear; y--) {
+      if (yearMap[y].found && yearMap[y].status !== 'cancelled') streak++;
+      else break;
+    }
+
+    return {
+      ...g, year_map: yearMap, all_years: allYears,
+      active_years: activeYears, missed_years: missedYears,
+      total_revenue: totalRevenue, first_year: minYear,
+      streak, is_active: isActive, loyalty_years: maxYear - minYear + 1,
+    };
+  });
+
+  res.json({ report: result });
+});
+
+// At-Risk customers — active last year, not renewed this year
+app.get('/api/reports/at-risk', auth, (req, res) => {
+  syncStatus();
+  const uid = req.user.id;
+  const thisYear = new Date().getFullYear();
+  const lastYear = thisYear - 1;
+
+  const lastYearSubs = db.all(`
+    SELECT DISTINCT customer_id, product_id FROM subscriptions
+    WHERE user_id=? AND strftime('%Y', start_date)=? AND status != 'cancelled'
+  `, [uid, String(lastYear)]);
+
+  const atRisk = [];
+  for (const s of lastYearSubs) {
+    const thisYearSub = db.get(`
+      SELECT id FROM subscriptions WHERE user_id=? AND customer_id=? AND product_id=?
+      AND strftime('%Y', start_date)=?
+    `, [uid, s.customer_id, s.product_id, String(thisYear)]);
+
+    if (!thisYearSub) {
+      const c = db.get('SELECT name, phone FROM customers WHERE id=?', [s.customer_id]);
+      const p = db.get('SELECT name FROM products WHERE id=?', [s.product_id]);
+      const lastSub = db.get(`
+        SELECT price, end_date FROM subscriptions
+        WHERE user_id=? AND customer_id=? AND product_id=? ORDER BY start_date DESC LIMIT 1
+      `, [uid, s.customer_id, s.product_id]);
+      atRisk.push({
+        customer_id: s.customer_id, customer_name: c?.name, customer_phone: c?.phone,
+        product_id: s.product_id, product_name: p?.name,
+        last_price: lastSub?.price, last_end_date: lastSub?.end_date,
+      });
+    }
+  }
+  res.json({ at_risk: atRisk });
+});
+
 // Download sample templates
 app.get('/api/import/template/:type', auth, (req, res) => {
   const { type } = req.params;

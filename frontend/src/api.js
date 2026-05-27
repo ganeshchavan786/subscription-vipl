@@ -22,4 +22,7 @@ export const updateSubscription= (id, d) => API.put(`/subscriptions/${id}`, d);
 export const deleteSubscription= id => API.delete(`/subscriptions/${id}`);
 export const renewSubscription = id => API.post(`/subscriptions/${id}/renew`);
 
+export const getRenewalHistory = (p) => API.get('/reports/renewal-history', { params: p || {} });
+export const getAtRisk         = ()  => API.get('/reports/at-risk');
+
 export default API;

@@ -3,10 +3,11 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 
 const NAV = [
-  { to: '/dashboard',     icon: '◎', label: 'Dashboard' },
-  { to: '/subscriptions', icon: '♻', label: 'Subscriptions' },
+  { to: '/dashboard',     icon: '◎',  label: 'Dashboard' },
+  { to: '/subscriptions', icon: '♻',  label: 'Subscriptions' },
   { to: '/customers',     icon: '👥', label: 'Customers' },
   { to: '/products',      icon: '📦', label: 'Products' },
+  { to: '/reports',       icon: '📊', label: 'Reports' },
 ];
 
 const Layout = ({ children }) => {
