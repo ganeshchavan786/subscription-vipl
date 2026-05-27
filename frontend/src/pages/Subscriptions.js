@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '../components/Layout';
 import { Toast, ConfirmModal, useToast } from '../components/Shared';
-import { getSubscriptions, createSubscription, updateSubscription, deleteSubscription, renewSubscription, getCustomers, getProducts } from '../api';
+import { getSubscriptions, createSubscription, updateSubscription, deleteSubscription, renewSubscription, getCustomers, getProducts, createCustomer, createProduct } from '../api';
 import { PayBadge } from './Dashboard';
 import ImportModal from '../components/ImportModal';
+import SearchableSelect from '../components/SearchableSelect';
 
 const PERIODS = [
   { value: 'daily',       label: 'Daily',       sub: '1 day'    },
@@ -85,6 +86,26 @@ export default function Subscriptions() {
   const handleProductChange = (pid) => {
     const product = products.find(p => p.id === parseInt(pid));
     setForm(f => ({ ...f, product_id: pid, price: product ? product.price : '' }));
+  };
+
+  // Quick add customer from subscription modal
+  const handleQuickAddCustomer = async (name) => {
+    if (name === '__OPEN_MODAL__') return; // handled by parent if needed
+    const r = await createCustomer({ name });
+    const newC = r.data.customer;
+    setCustomers(prev => [...prev, newC]);
+    showToast(`✅ Customer "${newC.name}" added!`);
+    return { id: newC.id, label: newC.name };
+  };
+
+  // Quick add product from subscription modal
+  const handleQuickAddProduct = async (name) => {
+    if (name === '__OPEN_MODAL__') return;
+    const r = await createProduct({ name, price: 0, quantity: 0, description: '' });
+    const newP = r.data.product;
+    setProducts(prev => [...prev, newP]);
+    showToast(`✅ Product "${newP.name}" added!`);
+    return { id: newP.id, label: newP.name };
   };
 
   // ── Sub-user helpers ──
@@ -451,18 +472,36 @@ export default function Subscriptions() {
                   <div className="form-row-2">
                     <div className="form-group">
                       <label className="form-label">Customer *</label>
-                      <select className="form-select" value={form.customer_id} onChange={f('customer_id')} required>
-                        <option value="">— Select Customer —</option>
-                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.phone ? ` · ${c.phone}` : ''}</option>)}
-                      </select>
+                      <SearchableSelect
+                        options={customers.map(c => ({
+                          id: c.id,
+                          label: c.name,
+                          sub: [c.phone, c.email].filter(Boolean).join(' · '),
+                        }))}
+                        value={form.customer_id}
+                        onChange={id => setForm(f => ({ ...f, customer_id: id }))}
+                        placeholder="Search customer..."
+                        onQuickAdd={handleQuickAddCustomer}
+                        quickAddLabel="Add Customer"
+                      />
                     </div>
                     <div className="form-group">
                       <label className="form-label">Service / Product *</label>
-                      <select className="form-select" value={form.product_id}
-                        onChange={e => handleProductChange(e.target.value)} required>
-                        <option value="">— Select Service —</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                      <SearchableSelect
+                        options={products.map(p => ({
+                          id: p.id,
+                          label: p.name,
+                          sub: p.price ? `₹${p.price.toLocaleString('en-IN')}` : '',
+                        }))}
+                        value={form.product_id}
+                        onChange={id => {
+                          const product = products.find(p => p.id === parseInt(id));
+                          setForm(f => ({ ...f, product_id: id, price: product ? product.price : f.price }));
+                        }}
+                        placeholder="Search product/service..."
+                        onQuickAdd={handleQuickAddProduct}
+                        quickAddLabel="Add Product"
+                      />
                     </div>
                   </div>
 
