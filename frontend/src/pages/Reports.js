@@ -34,6 +34,14 @@ export default function Reports() {
     if (tab === 'atrisk')  loadAtRisk();
   }, [tab]);
 
+  // Auto-load when filters change
+  useEffect(() => {
+    if (tab === 'history') {
+      const t = setTimeout(() => loadHistory(), 300);
+      return () => clearTimeout(t);
+    }
+  }, [filterCust, filterProd]);
+
   const loadHistory = async () => {
     setLoading(true);
     try {
@@ -55,13 +63,27 @@ export default function Reports() {
     finally { setLoading(false); }
   };
 
-  const applyFilter = () => loadHistory();
+  // Live search filter on frontend
+  const filteredReport = report.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      r.customer_name.toLowerCase().includes(q) ||
+      r.product_name.toLowerCase().includes(q) ||
+      (r.customer_phone && r.customer_phone.includes(q))
+    );
+  });
 
-  const filteredReport = report.filter(r =>
-    !search ||
-    r.customer_name.toLowerCase().includes(search.toLowerCase()) ||
-    r.product_name.toLowerCase().includes(search.toLowerCase())
-  );
+  // At-risk search
+  const filteredAtRisk = atRisk.filter(r => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      r.customer_name?.toLowerCase().includes(q) ||
+      r.product_name?.toLowerCase().includes(q) ||
+      (r.customer_phone && r.customer_phone.includes(q))
+    );
+  });
 
   return (
     <Layout>
@@ -78,7 +100,7 @@ export default function Reports() {
         {/* Tabs */}
         <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '0' }}>
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{
+            <button key={t.id} onClick={() => { setTab(t.id); setSearch(''); }} style={{
               padding: '0.6rem 1.1rem', border: 'none', background: 'none',
               cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
               color: tab === t.id ? 'var(--accent)' : 'var(--text2)',
@@ -96,7 +118,7 @@ export default function Reports() {
             {/* Filters */}
             <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div className="search-box">
-                <input placeholder="Search customer or product..."
+                <input placeholder="Search customer, product, phone..."
                   value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               <select className="filter-select" value={filterCust} onChange={e => setFilterCust(e.target.value)}>
@@ -107,7 +129,14 @@ export default function Reports() {
                 <option value="">All Products</option>
                 {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <button className="btn-primary" onClick={applyFilter}>Apply</button>
+              {(search || filterCust || filterProd) && (
+                <button className="btn-ghost btn-sm" onClick={() => { setSearch(''); setFilterCust(''); setFilterProd(''); }}>
+                  ✕ Clear
+                </button>
+              )}
+              <span style={{ fontSize: '0.8rem', color: 'var(--text3)', alignSelf: 'center' }}>
+                {filteredReport.length} result{filteredReport.length !== 1 ? 's' : ''}
+              </span>
             </div>
 
             {loading ? <div className="loader-wrap"><div className="spinner" /></div>
@@ -130,8 +159,24 @@ export default function Reports() {
         {/* ── AT-RISK TAB ── */}
         {tab === 'atrisk' && (
           <>
+            {/* Search for at-risk */}
+            <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="search-box">
+                <input placeholder="Search customer or product..."
+                  value={search} onChange={e => setSearch(e.target.value)} />
+              </div>
+              {search && (
+                <button className="btn-ghost btn-sm" onClick={() => setSearch('')}>✕ Clear</button>
+              )}
+              {filteredAtRisk.length > 0 && (
+                <span style={{ fontSize: '0.8rem', color: 'var(--text3)' }}>
+                  {filteredAtRisk.length} result{filteredAtRisk.length !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+
             {loading ? <div className="loader-wrap"><div className="spinner" /></div>
-            : atRisk.length === 0 ? (
+            : filteredAtRisk.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-icon">✅</div>
                 <h3>No at-risk customers</h3>
@@ -144,7 +189,7 @@ export default function Reports() {
                   borderRadius: 'var(--r)', padding: '0.75rem 1rem', marginBottom: '1rem',
                   fontSize: '0.875rem', color: 'var(--yellow)', fontWeight: 500,
                 }}>
-                  ⚠️ {atRisk.length} customer-product combination{atRisk.length > 1 ? 's' : ''} active last year but not yet renewed this year
+                  ⚠️ {filteredAtRisk.length} customer-product combination{filteredAtRisk.length > 1 ? 's' : ''} active last year but not yet renewed this year
                 </div>
                 <div className="table-wrap">
                   <table className="data-table">
@@ -159,7 +204,7 @@ export default function Reports() {
                       </tr>
                     </thead>
                     <tbody>
-                      {atRisk.map((r, i) => (
+                      {filteredAtRisk.map((r, i) => (
                         <tr key={i}>
                           <td style={{ color: 'var(--text3)' }}>{i + 1}</td>
                           <td>
