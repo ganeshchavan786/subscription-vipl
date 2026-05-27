@@ -59,10 +59,11 @@ export default function SearchableSelect({
   };
 
   const handleQuickAdd = async () => {
-    if (!addName.trim()) { setAddErr('Name required.'); return; }
+    const nameToAdd = (addName || query).trim();
+    if (!nameToAdd) { setAddErr('Name required.'); return; }
     setAdding(true); setAddErr('');
     try {
-      const result = await onQuickAdd(addName.trim());
+      const result = await onQuickAdd(nameToAdd);
       onChange(String(result.id));
       setOpen(false);
       setQuery('');
@@ -155,35 +156,19 @@ export default function SearchableSelect({
             {onQuickAdd && filtered.length === 0 && (
               <div style={{ padding: '0.65rem 0.85rem', borderTop: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginBottom: '0.4rem' }}>
-                  "{query || 'New'}" not found —
+                  "{query}" not found —
                 </div>
-                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                  <input
-                    value={addName || query}
-                    onChange={e => setAddName(e.target.value)}
-                    placeholder={`${quickAddLabel} name...`}
-                    style={{
-                      flex: 1, border: '1px solid var(--border2)', borderRadius: 6,
-                      padding: '0.4rem 0.6rem', fontSize: '0.82rem',
-                      outline: 'none', background: 'var(--surface2)', color: 'var(--text)',
-                    }}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleQuickAdd(); } }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleQuickAdd}
-                    disabled={adding}
-                    style={{
-                      background: 'var(--accent)', color: 'white', border: 'none',
-                      borderRadius: 6, padding: '0.4rem 0.75rem',
-                      fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
-                      whiteSpace: 'nowrap', opacity: adding ? 0.6 : 1,
-                    }}
-                  >
-                    {adding ? '...' : `+ ${quickAddLabel}`}
-                  </button>
-                </div>
-                {addErr && <div style={{ fontSize: '0.75rem', color: 'var(--red)', marginTop: '0.3rem' }}>{addErr}</div>}
+                <button
+                  type="button"
+                  onClick={() => { onQuickAdd('__OPEN_MODAL__', query); setOpen(false); }}
+                  style={{
+                    width: '100%', background: 'var(--accent)', color: 'white', border: 'none',
+                    borderRadius: 6, padding: '0.5rem 0.75rem',
+                    fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                  }}
+                >
+                  + {quickAddLabel}: "{query}"
+                </button>
               </div>
             )}
 
@@ -193,11 +178,11 @@ export default function SearchableSelect({
                 style={{
                   padding: '0.5rem 0.85rem', borderTop: '1px solid var(--border)',
                   cursor: 'pointer', color: 'var(--accent)', fontSize: '0.82rem', fontWeight: 600,
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
                 }}
-                onClick={() => { setQuery(''); setAddName(''); setOpen(false);
-                  // trigger parent quick add modal
-                  onQuickAdd('__OPEN_MODAL__');
-                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                onClick={() => { onQuickAdd('__OPEN_MODAL__', ''); setOpen(false); }}
               >
                 + {quickAddLabel}
               </div>

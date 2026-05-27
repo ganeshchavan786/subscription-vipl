@@ -62,6 +62,18 @@ export default function Subscriptions() {
   const [expandedId, setExpandedId] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
 
+  // Quick Add modals
+  const [quickCustModal, setQuickCustModal] = useState(false);
+  const [quickCustName, setQuickCustName]   = useState('');
+  const [quickCustForm, setQuickCustForm]   = useState({ name:'', email:'', phone:'', notes:'' });
+  const [quickCustErr, setQuickCustErr]     = useState('');
+  const [quickCustSaving, setQuickCustSaving] = useState(false);
+
+  const [quickProdModal, setQuickProdModal] = useState(false);
+  const [quickProdForm, setQuickProdForm]   = useState({ name:'', price:'', quantity:'', description:'' });
+  const [quickProdErr, setQuickProdErr]     = useState('');
+  const [quickProdSaving, setQuickProdSaving] = useState(false);
+
   const load = useCallback(async (f = filters) => {
     try {
       const params = {};
@@ -89,23 +101,48 @@ export default function Subscriptions() {
   };
 
   // Quick add customer from subscription modal
-  const handleQuickAddCustomer = async (name) => {
-    if (name === '__OPEN_MODAL__') return; // handled by parent if needed
-    const r = await createCustomer({ name });
-    const newC = r.data.customer;
-    setCustomers(prev => [...prev, newC]);
-    showToast(`✅ Customer "${newC.name}" added!`);
-    return { id: newC.id, label: newC.name };
+  const handleQuickAddCustomer = async (name, prefill) => {
+    // Open modal with prefilled name
+    setQuickCustForm({ name: prefill || name || '', email: '', phone: '', notes: '' });
+    setQuickCustErr('');
+    setQuickCustModal(true);
+  };
+
+  // Save quick customer
+  const saveQuickCustomer = async () => {
+    if (!quickCustForm.name.trim()) { setQuickCustErr('Name required.'); return; }
+    setQuickCustSaving(true); setQuickCustErr('');
+    try {
+      const r = await createCustomer(quickCustForm);
+      const newC = r.data.customer;
+      setCustomers(prev => [...prev, newC]);
+      setForm(f => ({ ...f, customer_id: String(newC.id) }));
+      setQuickCustModal(false);
+      showToast(`✅ Customer "${newC.name}" added!`);
+    } catch(e) { setQuickCustErr(e.response?.data?.message || 'Failed to add.'); }
+    finally { setQuickCustSaving(false); }
   };
 
   // Quick add product from subscription modal
-  const handleQuickAddProduct = async (name) => {
-    if (name === '__OPEN_MODAL__') return;
-    const r = await createProduct({ name, price: 0, quantity: 0, description: '' });
-    const newP = r.data.product;
-    setProducts(prev => [...prev, newP]);
-    showToast(`✅ Product "${newP.name}" added!`);
-    return { id: newP.id, label: newP.name };
+  const handleQuickAddProduct = async (name, prefill) => {
+    setQuickProdForm({ name: prefill || name || '', price: '', quantity: '', description: '' });
+    setQuickProdErr('');
+    setQuickProdModal(true);
+  };
+
+  // Save quick product
+  const saveQuickProduct = async () => {
+    if (!quickProdForm.name.trim()) { setQuickProdErr('Name required.'); return; }
+    setQuickProdSaving(true); setQuickProdErr('');
+    try {
+      const r = await createProduct(quickProdForm);
+      const newP = r.data.product;
+      setProducts(prev => [...prev, newP]);
+      setForm(f => ({ ...f, product_id: String(newP.id), price: newP.price || f.price }));
+      setQuickProdModal(false);
+      showToast(`✅ Product "${newP.name}" added!`);
+    } catch(e) { setQuickProdErr(e.response?.data?.message || 'Failed to add.'); }
+    finally { setQuickProdSaving(false); }
   };
 
   // ── Sub-user helpers ──
@@ -752,6 +789,104 @@ export default function Subscriptions() {
           onConfirm={handleDelete}
           onCancel={() => setDeleteId(null)}
         />
+      )}
+
+      {/* ── Quick Add Customer Modal ── */}
+      {quickCustModal && (
+        <div className="modal-overlay" style={{zIndex:1100}}>
+          <div className="modal modal-md">
+            <div className="modal-head">
+              <h2>👤 Add New Customer</h2>
+              <button className="modal-close" onClick={() => setQuickCustModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {quickCustErr && <div className="form-error">{quickCustErr}</div>}
+              <div className="form-grid">
+                <div className="form-group">
+                  <label className="form-label">Full Name *</label>
+                  <input className="form-input" autoFocus placeholder="e.g. Rajesh Steel"
+                    value={quickCustForm.name}
+                    onChange={e => setQuickCustForm(f => ({...f, name: e.target.value}))} />
+                </div>
+                <div className="form-row-2">
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input className="form-input" type="email" placeholder="email@example.com"
+                      value={quickCustForm.email}
+                      onChange={e => setQuickCustForm(f => ({...f, email: e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input className="form-input" type="tel" placeholder="9876543210"
+                      value={quickCustForm.phone}
+                      onChange={e => setQuickCustForm(f => ({...f, phone: e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Notes</label>
+                  <textarea className="form-textarea" placeholder="Any notes..."
+                    value={quickCustForm.notes}
+                    onChange={e => setQuickCustForm(f => ({...f, notes: e.target.value}))} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn-cancel" onClick={() => setQuickCustModal(false)}>Cancel</button>
+              <button className="btn-save" onClick={saveQuickCustomer} disabled={quickCustSaving}>
+                {quickCustSaving ? <span className="spinner-sm"/> : 'Add Customer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Add Product Modal ── */}
+      {quickProdModal && (
+        <div className="modal-overlay" style={{zIndex:1100}}>
+          <div className="modal modal-md">
+            <div className="modal-head">
+              <h2>📦 Add New Product</h2>
+              <button className="modal-close" onClick={() => setQuickProdModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {quickProdErr && <div className="form-error">{quickProdErr}</div>}
+              <div className="form-grid">
+                <div className="form-group">
+                  <label className="form-label">Product / Service Name *</label>
+                  <input className="form-input" autoFocus placeholder="e.g. Tally Prime"
+                    value={quickProdForm.name}
+                    onChange={e => setQuickProdForm(f => ({...f, name: e.target.value}))} />
+                </div>
+                <div className="form-row-2">
+                  <div className="form-group">
+                    <label className="form-label">Price (₹)</label>
+                    <input className="form-input" type="number" min="0" placeholder="0"
+                      value={quickProdForm.price}
+                      onChange={e => setQuickProdForm(f => ({...f, price: e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Quantity</label>
+                    <input className="form-input" type="number" min="0" placeholder="0"
+                      value={quickProdForm.quantity}
+                      onChange={e => setQuickProdForm(f => ({...f, quantity: e.target.value}))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Description</label>
+                  <textarea className="form-textarea" placeholder="Brief description..."
+                    value={quickProdForm.description}
+                    onChange={e => setQuickProdForm(f => ({...f, description: e.target.value}))} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn-cancel" onClick={() => setQuickProdModal(false)}>Cancel</button>
+              <button className="btn-save" onClick={saveQuickProduct} disabled={quickProdSaving}>
+                {quickProdSaving ? <span className="spinner-sm"/> : 'Add Product'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   );
