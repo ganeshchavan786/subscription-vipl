@@ -5,6 +5,7 @@ import { getSubscriptions, createSubscription, updateSubscription, deleteSubscri
 import { PayBadge } from './Dashboard';
 import ImportModal from '../components/ImportModal';
 import SearchableSelect from '../components/SearchableSelect';
+import { fmtDate } from '../utils/dateFormat';
 
 const PERIODS = [
   { value: 'daily',       label: 'Daily',       sub: '1 day'    },
@@ -342,7 +343,7 @@ export default function Subscriptions() {
                           {isExpanded ? '▼' : '▶'}
                         </td>
                         <td style={{fontSize:'0.8rem', color:'var(--text2)', whiteSpace:'nowrap'}}>
-                          <div style={{fontWeight:500}}>{s.transaction_date || s.start_date}</div>
+                          <div style={{fontWeight:500}}>{fmtDate(s.transaction_date || s.start_date)}</div>
                           <div style={{fontSize:'0.68rem', color:'var(--text3)'}}>Txn Date</div>
                         </td>
                         <td>
@@ -387,8 +388,8 @@ export default function Subscriptions() {
                                     📋 Contract / AMC Details
                                   </div>
                                   <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'1rem'}}>
-                                    <div><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>Start Date</span><div style={{fontWeight:600,marginTop:2}}>{s.start_date}</div></div>
-                                    <div><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>End Date</span><div style={{fontWeight:600,marginTop:2}}>{s.end_date}</div></div>
+                                    <div><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>Start Date</span><div style={{fontWeight:600,marginTop:2}}>{fmtDate(s.start_date)}</div></div>
+                                    <div><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>End Date</span><div style={{fontWeight:600,marginTop:2}}>{fmtDate(s.end_date)}</div></div>
                                     <div><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>Price</span><div style={{fontWeight:700,color:'var(--accent)',marginTop:2}}>{fmt(s.price)}</div></div>
                                   </div>
                                   {s.notes && <div style={{marginTop:'0.5rem'}}><span style={{fontSize:'0.7rem',color:'var(--text3)',fontWeight:600,textTransform:'uppercase'}}>Notes</span><div style={{fontSize:'0.85rem',color:'var(--text2)',marginTop:2,whiteSpace:'pre-wrap'}}>{s.notes}</div></div>}
@@ -416,8 +417,8 @@ export default function Subscriptions() {
                                       <tr key={i} style={{borderBottom:'1px solid var(--border)'}}>
                                         <td style={tdS}>{i+1}</td>
                                         <td style={{...tdS, fontWeight:600}}>{u.user_name}</td>
-                                        <td style={tdS}>{u.start_date}</td>
-                                        <td style={tdS}>{u.end_date}</td>
+                                        <td style={tdS}>{fmtDate(u.start_date)}</td>
+                                        <td style={tdS}>{fmtDate(u.end_date)}</td>
                                         <td style={{...tdS, fontWeight:700, color:'var(--accent)'}}>
                                           {u.price ? fmt(u.price) : '—'}
                                         </td>

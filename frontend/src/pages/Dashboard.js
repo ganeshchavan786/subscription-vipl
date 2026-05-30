@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import { getStats, getSubscriptions } from '../api';
 import { Toast, useToast } from '../components/Shared';
 import { useAuth } from '../AuthContext';
+import { fmtDate } from '../utils/dateFormat';
 
 const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n);
 
@@ -82,7 +83,7 @@ export default function Dashboard() {
                           <td>{s.product_name}</td>
                           <td><span className="badge badge-purple">{PERIOD_LABEL[s.billing_period]}</span></td>
                           <td>
-                            <span style={{color:'var(--yellow)',fontWeight:600}}>{s.end_date}</span>
+                            <span style={{color:'var(--yellow)',fontWeight:600}}>{fmtDate(s.end_date)}</span>
                             <span style={{color:'var(--text2)',fontSize:'0.78rem',marginLeft:'0.5rem'}}>({daysLeft}d left)</span>
                           </td>
                           <td><PayBadge status={s.payment_status}/></td>

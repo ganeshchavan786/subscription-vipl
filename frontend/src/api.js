@@ -24,5 +24,6 @@ export const renewSubscription = id => API.post(`/subscriptions/${id}/renew`);
 
 export const getRenewalHistory = (p) => API.get('/reports/renewal-history', { params: p || {} });
 export const getAtRisk         = ()  => API.get('/reports/at-risk');
+export const getFYReport       = ()  => API.get('/reports/fy');
 
 export default API;

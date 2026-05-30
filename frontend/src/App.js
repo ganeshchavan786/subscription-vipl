@@ -9,6 +9,7 @@ import Customers     from './pages/Customers';
 import Products      from './pages/Products';
 import Subscriptions from './pages/Subscriptions';
 import Reports       from './pages/Reports';
+import FYReport      from './pages/FYReport';
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/products"      element={<ProtectedRoute><Products /></ProtectedRoute>} />
           <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
           <Route path="/reports"       element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+          <Route path="/fy-report"     element={<ProtectedRoute><FYReport /></ProtectedRoute>} />
           <Route path="*"              element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { Toast, useToast } from '../components/Shared';
 import { getRenewalHistory, getAtRisk, getCustomers, getProducts } from '../api';
+import { fmtDate } from '../utils/dateFormat';
 
 const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
 
@@ -214,7 +215,7 @@ export default function Reports() {
                           <td>{r.product_name}</td>
                           <td style={{ fontWeight: 600, color: 'var(--accent)' }}>{fmt(r.last_price)}</td>
                           <td>
-                            <span style={{ color: 'var(--red)', fontWeight: 500 }}>{r.last_end_date}</span>
+                            <span style={{ color: 'var(--red)', fontWeight: 500 }}>{fmtDate(r.last_end_date)}</span>
                           </td>
                           <td>
                             <a href="/subscriptions" style={{
