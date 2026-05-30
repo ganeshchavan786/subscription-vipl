@@ -282,6 +282,29 @@ export default function Subscriptions() {
   const f = k => e => setForm(prev => ({ ...prev, [k]: e.target.value }));
   const daysLeft = (endDate) => Math.ceil((new Date(endDate) - new Date()) / (1000*60*60*24));
 
+  // Sorting
+  const [sortKey, setSortKey] = useState('transaction_date');
+  const [sortDir, setSortDir] = useState('desc');
+
+  const handleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const sortedSubs = [...subs].sort((a, b) => {
+    let va = a[sortKey] || '';
+    let vb = b[sortKey] || '';
+    if (sortKey === 'price') { va = parseFloat(va)||0; vb = parseFloat(vb)||0; }
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
+
+  const SortTh = ({ label, col }) => (
+    <th onClick={() => handleSort(col)} style={{ cursor:'pointer', userSelect:'none', whiteSpace:'nowrap' }}>
+      {label} {sortKey === col ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+    </th>
+  );
+
   // Generate FY options from 2020 to current+1
   const currentYear = new Date().getFullYear();
   const fyOptions = [];
@@ -416,20 +439,20 @@ export default function Subscriptions() {
               <thead>
                 <tr>
                   <th style={{width:32}}></th>
-                  <th>Voucher</th>
-                  <th>Txn Date</th>
-                  <th>Customer</th>
-                  <th>Service</th>
+                  <SortTh label="Voucher"   col="voucher_no" />
+                  <SortTh label="Txn Date"  col="transaction_date" />
+                  <SortTh label="Customer"  col="customer_name" />
+                  <SortTh label="Service"   col="product_name" />
                   <th>Users</th>
-                  <th>Price</th>
+                  <SortTh label="Price"     col="price" />
                   <th>Billing</th>
-                  <th>Status</th>
-                  <th>Payment</th>
+                  <SortTh label="Status"    col="status" />
+                  <SortTh label="Payment"   col="payment_status" />
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {subs.map(s => {
+                {sortedSubs.map(s => {
                   const sb = STATUS_BADGE[s.status] || STATUS_BADGE.expired;
                   const isExpanded = expandedId === s.id;
                   const userCount = s.sub_users?.length || s.num_users || 1;
