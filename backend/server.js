@@ -685,7 +685,7 @@ app.get('/api/reports/fy-expiry', auth, (req, res) => {
   const rows = db.all(`
     SELECT s.id, s.customer_id, s.product_id, s.start_date, s.end_date,
            s.price, s.status, s.payment_status, s.transaction_date,
-           s.billing_period, s.is_user_based,
+           s.billing_period, s.is_user_based, s.voucher_no,
            c.name as customer_name, c.phone as customer_phone,
            p.name as product_name
     FROM subscriptions s
@@ -791,7 +791,7 @@ app.get('/api/reports/fy', auth, (req, res) => {
   const rows = db.all(`
     SELECT s.id, s.customer_id, s.product_id, s.start_date, s.end_date,
            s.price, s.status, s.payment_status, s.transaction_date,
-           s.billing_period, s.is_user_based,
+           s.billing_period, s.is_user_based, s.voucher_no,
            c.name as customer_name, c.phone as customer_phone,
            p.name as product_name
     FROM subscriptions s
