@@ -454,6 +454,7 @@ app.post('/api/import/subscriptions', auth, upload.single('file'), (req, res) =>
         const isUserBased    = ['yes','true','1'].includes(String(row['is_user_based']).toLowerCase()) ? 1 : 0;
         const startDate      = String(row['start_date'] || '').trim();
         const txnDate        = String(row['transaction_date'] || row['txn_date'] || startDate).trim();
+        const voucherNo      = String(row['voucher_no'] || row['voucher'] || '').trim();
         const notes          = String(row['notes'] || '').trim();
 
         if (!customerName) { skipped++; errors.push(`Row ${ref||'?'}: customer_name missing`); continue; }
@@ -493,9 +494,9 @@ app.post('/api/import/subscriptions', auth, upload.single('file'), (req, res) =>
 
         // Insert subscription
         db.run(`INSERT INTO subscriptions
-          (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based,transaction_date)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [req.user.id, customer.id, product.id, finalPrice, numUsers, bp, startDate, endDate, status, autoRenewal, paymentStatus, notes, isUserBased, txnDate]);
+          (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based,transaction_date,voucher_no)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [req.user.id, customer.id, product.id, finalPrice, numUsers, bp, startDate, endDate, status, autoRenewal, paymentStatus, notes, isUserBased, txnDate, voucherNo]);
 
         const newSub = db.get('SELECT id FROM subscriptions WHERE rowid=last_insert_rowid()');
         const subId = newSub.id;
