@@ -670,6 +670,110 @@ app.get('/api/reports/at-risk', auth, (req, res) => {
   res.json({ at_risk: atRisk });
 });
 
+// Financial Year Expiry Report — grouped by end_date
+app.get('/api/reports/fy-expiry', auth, (req, res) => {
+  syncStatus();
+  const uid = req.user.id;
+
+  const rows = db.all(`
+    SELECT s.id, s.customer_id, s.product_id, s.start_date, s.end_date,
+           s.price, s.status, s.payment_status, s.transaction_date,
+           s.billing_period, s.is_user_based,
+           c.name as customer_name, c.phone as customer_phone,
+           p.name as product_name
+    FROM subscriptions s
+    JOIN customers c ON s.customer_id = c.id
+    JOIN products  p ON s.product_id  = p.id
+    WHERE s.user_id = ? AND s.status != 'cancelled'
+    ORDER BY s.end_date ASC
+  `, [uid]);
+
+  if (rows.length === 0) return res.json({ fy_data: [] });
+
+  const fyMap = {};
+  for (const row of rows) {
+    const dateStr = row.end_date;
+    const d = new Date(dateStr);
+    const m = d.getMonth();
+    const y = d.getFullYear();
+    const fyStart = m >= 3 ? y : y - 1;
+    const fyKey = `${fyStart}`;
+
+    if (!fyMap[fyKey]) {
+      fyMap[fyKey] = {
+        fy_start: fyStart,
+        fy_label: `FY ${fyStart}-${String(fyStart+1).slice(2)}`,
+        fy_from:  `${fyStart}-04-01`,
+        fy_to:    `${fyStart+1}-03-31`,
+        total_subs: 0,
+        total_revenue: 0,
+        paid_revenue: 0,
+        unpaid_revenue: 0,
+        active_count: 0,
+        expired_count: 0,
+        customer_ids: new Set(),
+        months: {}
+      };
+      for (let mi = 0; mi < 12; mi++) {
+        const mIdx = (mi + 3) % 12;
+        const mYear = mi < 9 ? fyStart : fyStart + 1;
+        const mKey = `${mYear}-${String(mIdx+1).padStart(2,'0')}`;
+        fyMap[fyKey].months[mKey] = {
+          month_key: mKey,
+          month_label: ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][mIdx],
+          month_year: mYear,
+          subs: [], count: 0, revenue: 0, paid: 0, unpaid: 0,
+          active_count: 0, expired_count: 0,
+        };
+      }
+    }
+
+    const fy = fyMap[fyKey];
+    const mKey = dateStr.slice(0,7);
+
+    fy.total_subs++;
+    fy.total_revenue += row.price || 0;
+    fy.customer_ids.add(row.customer_id);
+    if (row.payment_status === 'paid') fy.paid_revenue += row.price || 0;
+    else fy.unpaid_revenue += row.price || 0;
+    if (row.status === 'active') fy.active_count++;
+    else fy.expired_count++;
+
+    if (fy.months[mKey]) {
+      fy.months[mKey].subs.push({
+        id: row.id,
+        customer_name: row.customer_name,
+        customer_phone: row.customer_phone,
+        product_name: row.product_name,
+        price: row.price,
+        status: row.status,
+        payment_status: row.payment_status,
+        start_date: row.start_date,
+        end_date: row.end_date,
+        transaction_date: row.transaction_date,
+        billing_period: row.billing_period,
+      });
+      fy.months[mKey].count++;
+      fy.months[mKey].revenue += row.price || 0;
+      if (row.payment_status === 'paid') fy.months[mKey].paid += row.price || 0;
+      else fy.months[mKey].unpaid += row.price || 0;
+      if (row.status === 'active') fy.months[mKey].active_count++;
+      else fy.months[mKey].expired_count++;
+    }
+  }
+
+  const result = Object.values(fyMap)
+    .sort((a, b) => a.fy_start - b.fy_start)
+    .map(fy => ({
+      ...fy,
+      customer_count: fy.customer_ids.size,
+      customer_ids: undefined,
+      months: Object.values(fy.months),
+    }));
+
+  res.json({ fy_data: result });
+});
+
 // Financial Year Report
 app.get('/api/reports/fy', auth, (req, res) => {
   syncStatus();

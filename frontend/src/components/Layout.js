@@ -7,7 +7,8 @@ const NAV = [
   { to: '/subscriptions', icon: '♻',  label: 'Subscriptions' },
   { to: '/customers',     icon: '👥', label: 'Customers' },
   { to: '/products',      icon: '📦', label: 'Products' },
-  { to: '/fy-report',     icon: '📅', label: 'FY Report' },
+  { to: '/fy-report',     icon: '💰', label: 'FY Sales' },
+  { to: '/fy-expiry',     icon: '📋', label: 'FY Expiry' },
   { to: '/reports',       icon: '📊', label: 'Reports' },
 ];
 

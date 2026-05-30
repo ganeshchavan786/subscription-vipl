@@ -10,6 +10,7 @@ import Products      from './pages/Products';
 import Subscriptions from './pages/Subscriptions';
 import Reports       from './pages/Reports';
 import FYReport      from './pages/FYReport';
+import FYExpiryReport from './pages/FYExpiryReport';
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
           <Route path="/reports"       element={<ProtectedRoute><Reports /></ProtectedRoute>} />
           <Route path="/fy-report"     element={<ProtectedRoute><FYReport /></ProtectedRoute>} />
+          <Route path="/fy-expiry"     element={<ProtectedRoute><FYExpiryReport /></ProtectedRoute>} />
           <Route path="*"              element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

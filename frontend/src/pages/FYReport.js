@@ -1,30 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { Toast, useToast } from '../components/Shared';
-import { getFYReport } from '../api';
+import { getFYReport, getFYExpiryReport } from '../api';
 import { fmtDate } from '../utils/dateFormat';
 
 const fmt = n => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0);
-const MONTHS_ORDER = ['APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC','JAN','FEB','MAR'];
 
-export default function FYReport() {
+// mode: 'sales' | 'expiry'
+export default function FYReport({ mode = 'sales' }) {
+  const isSales = mode === 'sales';
   const [fyData, setFyData]         = useState([]);
   const [loading, setLoading]       = useState(true);
   const [selectedFY, setSelectedFY] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(null);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [payFilter, setPayFilter]   = useState('');
   const [toast, showToast]          = useToast();
 
   useEffect(() => {
-    getFYReport()
+    const apiFn = isSales ? getFYReport : getFYExpiryReport;
+    apiFn()
       .then(r => {
         const data = r.data.fy_data;
         setFyData(data);
-        // Auto-select latest FY
         if (data.length > 0) setSelectedFY(data[data.length - 1]);
       })
       .catch(() => showToast('Failed to load FY report.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [mode]);
 
   const handleFYClick = (fy) => {
     setSelectedFY(fy);
@@ -46,8 +49,14 @@ export default function FYReport() {
       <Toast msg={toast} />
       <div className="page-header">
         <div>
-          <h1 className="page-title">Financial Year Report</h1>
-          <p className="page-sub">April to March — year-wise subscription & revenue analysis</p>
+          <h1 className="page-title">
+            {isSales ? '💰 FY Sales Report' : '📋 FY Expiry Report'}
+          </h1>
+          <p className="page-sub">
+            {isSales
+              ? 'Transaction date wise — revenue earned per financial year'
+              : 'End date wise — subscriptions expiring per financial year'}
+          </p>
         </div>
       </div>
 
@@ -197,23 +206,41 @@ export default function FYReport() {
                 {selectedMonth && (
                   <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }}>
                     {/* Month header */}
-                    <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', background: 'var(--surface2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', background: 'var(--surface2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
                       <div>
                         <div style={{ fontFamily: 'Space Grotesk, sans-serif', fontWeight: 700, fontSize: '1rem' }}>
                           {selectedMonth.month_label} {selectedMonth.month_year}
+                          {!isSales && <span style={{ marginLeft: 8, fontSize: '0.75rem', color: 'var(--text3)', fontWeight: 400 }}>— Expiring this month</span>}
                         </div>
                         <div style={{ fontSize: '0.78rem', color: 'var(--text3)', marginTop: 2 }}>
                           {selectedMonth.count} subscription{selectedMonth.count !== 1 ? 's' : ''} · {fmt(selectedMonth.revenue)} total
+                          {!isSales && selectedMonth.active_count > 0 && <span style={{ color: 'var(--green)', marginLeft: 8 }}>· {selectedMonth.active_count} still active</span>}
+                          {!isSales && selectedMonth.expired_count > 0 && <span style={{ color: 'var(--red)', marginLeft: 8 }}>· {selectedMonth.expired_count} expired</span>}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {/* Filters */}
+                        <select className="filter-select" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem' }}
+                          value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                          <option value="">All Status</option>
+                          <option value="active">Active</option>
+                          <option value="expired">Expired</option>
+                        </select>
+                        <select className="filter-select" style={{ fontSize: '0.78rem', padding: '0.3rem 0.6rem' }}
+                          value={payFilter} onChange={e => setPayFilter(e.target.value)}>
+                          <option value="">All Payment</option>
+                          <option value="paid">Paid</option>
+                          <option value="unpaid">Unpaid</option>
+                          <option value="partial">Partial</option>
+                        </select>
                         <span style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: 5, fontWeight: 600, background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid rgba(5,150,105,0.2)' }}>
                           Paid: {fmt(selectedMonth.paid)}
                         </span>
                         <span style={{ fontSize: '0.72rem', padding: '3px 10px', borderRadius: 5, fontWeight: 600, background: 'var(--red-dim)', color: 'var(--red)', border: '1px solid rgba(220,38,38,0.2)' }}>
                           Unpaid: {fmt(selectedMonth.unpaid)}
                         </span>
-                        <button onClick={() => setSelectedMonth(null)} style={{ background: 'var(--surface3)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text2)' }}>
+                        <button onClick={() => { setSelectedMonth(null); setStatusFilter(''); setPayFilter(''); }}
+                          style={{ background: 'var(--surface3)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--text2)' }}>
                           ✕ Close
                         </button>
                       </div>
@@ -226,7 +253,7 @@ export default function FYReport() {
                           <th>#</th>
                           <th>Customer</th>
                           <th>Product / Service</th>
-                          <th>Txn Date</th>
+                          <th>{isSales ? 'Txn Date' : 'Start Date'}</th>
                           <th>Start Date</th>
                           <th>End Date</th>
                           <th>Price</th>
@@ -236,7 +263,9 @@ export default function FYReport() {
                         </tr>
                       </thead>
                       <tbody>
-                        {selectedMonth.subs.map((s, i) => (
+                        {selectedMonth.subs
+                          .filter(s => (!statusFilter || s.status === statusFilter) && (!payFilter || s.payment_status === payFilter))
+                          .map((s, i) => (
                           <tr key={s.id}>
                             <td style={{ color: 'var(--text3)' }}>{i + 1}</td>
                             <td>
@@ -244,9 +273,13 @@ export default function FYReport() {
                               {s.customer_phone && <div style={{ fontSize: '0.72rem', color: 'var(--text3)' }}>{s.customer_phone}</div>}
                             </td>
                             <td>{s.product_name}</td>
-                            <td style={{ fontSize: '0.82rem', color: 'var(--text2)' }}>{fmtDate(s.transaction_date || s.start_date)}</td>
+                            <td style={{ fontSize: '0.82rem', color: 'var(--text2)' }}>
+                              {isSales ? fmtDate(s.transaction_date || s.start_date) : fmtDate(s.start_date)}
+                            </td>
                             <td style={{ fontSize: '0.82rem' }}>{fmtDate(s.start_date)}</td>
-                            <td style={{ fontSize: '0.82rem' }}>{fmtDate(s.end_date)}</td>
+                            <td style={{ fontSize: '0.82rem', fontWeight: 600, color: !isSales && s.status === 'active' ? 'var(--yellow)' : 'var(--text)' }}>
+                              {fmtDate(s.end_date)}
+                            </td>
                             <td style={{ fontWeight: 700, color: 'var(--accent)' }}>{fmt(s.price)}</td>
                             <td>
                               <span className="badge badge-purple" style={{ fontSize: '0.65rem' }}>
@@ -269,10 +302,10 @@ export default function FYReport() {
                       <tfoot>
                         <tr style={{ background: 'var(--accent-dim)' }}>
                           <td colSpan={6} style={{ padding: '0.75rem 1rem', fontWeight: 700, textAlign: 'right', color: 'var(--text2)', fontSize: '0.85rem' }}>
-                            Total ({selectedMonth.count} subscriptions)
+                            Total ({selectedMonth.subs.filter(s => (!statusFilter || s.status === statusFilter) && (!payFilter || s.payment_status === payFilter)).length} subscriptions)
                           </td>
                           <td style={{ padding: '0.75rem 1rem', fontWeight: 800, color: 'var(--accent)', fontSize: '0.95rem', fontFamily: 'Space Grotesk, sans-serif' }}>
-                            {fmt(selectedMonth.revenue)}
+                            {fmt(selectedMonth.subs.filter(s => (!statusFilter || s.status === statusFilter) && (!payFilter || s.payment_status === payFilter)).reduce((sum, s) => sum + (s.price || 0), 0))}
                           </td>
                           <td colSpan={3} />
                         </tr>
