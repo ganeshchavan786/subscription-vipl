@@ -1,6 +1,23 @@
 import axios from 'axios';
 const API = axios.create({ baseURL: '/api' });
-API.interceptors.request.use(c => { const t = localStorage.getItem('token'); if (t) c.headers.Authorization = `Bearer ${t}`; return c; });
+API.interceptors.request.use(c => {
+  const t = localStorage.getItem('token');
+  if (t) c.headers.Authorization = `Bearer ${t}`;
+  return c;
+});
+
+// Auto logout on 401/403
+API.interceptors.response.use(
+  res => res,
+  err => {
+    if (err.response?.status === 401 || err.response?.status === 403) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    return Promise.reject(err);
+  }
+);
 
 export const registerUser      = d => API.post('/register', d);
 export const loginUser         = d => API.post('/login', d);
