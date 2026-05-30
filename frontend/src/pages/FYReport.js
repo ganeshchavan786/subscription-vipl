@@ -253,6 +253,7 @@ export default function FYReport({ mode = 'sales' }) {
                           <th>#</th>
                           <th>Customer</th>
                           <th>Product / Service</th>
+                          <th>Voucher No</th>
                           <th>{isSales ? 'Txn Date' : 'Start Date'}</th>
                           <th>Start Date</th>
                           <th>End Date</th>
@@ -273,6 +274,12 @@ export default function FYReport({ mode = 'sales' }) {
                               {s.customer_phone && <div style={{ fontSize: '0.72rem', color: 'var(--text3)' }}>{s.customer_phone}</div>}
                             </td>
                             <td>{s.product_name}</td>
+                            <td style={{ fontSize: '0.78rem' }}>
+                              {s.voucher_no
+                                ? <span style={{fontWeight:600, background:'var(--surface2)', border:'1px solid var(--border)', borderRadius:4, padding:'1px 6px', fontSize:'0.72rem'}}>{s.voucher_no}</span>
+                                : <span style={{color:'var(--text3)'}}>—</span>
+                              }
+                            </td>
                             <td style={{ fontSize: '0.82rem', color: 'var(--text2)' }}>
                               {isSales ? fmtDate(s.transaction_date || s.start_date) : fmtDate(s.start_date)}
                             </td>
@@ -301,7 +308,7 @@ export default function FYReport({ mode = 'sales' }) {
                       </tbody>
                       <tfoot>
                         <tr style={{ background: 'var(--accent-dim)' }}>
-                          <td colSpan={6} style={{ padding: '0.75rem 1rem', fontWeight: 700, textAlign: 'right', color: 'var(--text2)', fontSize: '0.85rem' }}>
+                          <td colSpan={7} style={{ padding: '0.75rem 1rem', fontWeight: 700, textAlign: 'right', color: 'var(--text2)', fontSize: '0.85rem' }}>
                             Total ({selectedMonth.subs.filter(s => (!statusFilter || s.status === statusFilter) && (!payFilter || s.payment_status === payFilter)).length} subscriptions)
                           </td>
                           <td style={{ padding: '0.75rem 1rem', fontWeight: 800, color: 'var(--accent)', fontSize: '0.95rem', fontFamily: 'Space Grotesk, sans-serif' }}>

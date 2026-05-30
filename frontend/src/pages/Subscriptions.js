@@ -41,7 +41,7 @@ const calcEnd = (startDate, period) => {
 const EMPTY_FORM = {
   customer_id: '', product_id: '', price: '', num_users: 1,
   billing_period: 'monthly', start_date: today(),
-  transaction_date: today(),
+  transaction_date: today(), voucher_no: '',
   auto_renewal: false, payment_status: 'unpaid', notes: '', status: 'active',
   is_user_based: true,
   sub_users: [{ user_name: '', start_date: today(), end_date: '', price: '', description: '' }],
@@ -209,6 +209,7 @@ export default function Subscriptions() {
       num_users:        existingUsers.length,
       billing_period:   s.billing_period,
       transaction_date: s.transaction_date || s.start_date,
+      voucher_no:       s.voucher_no || '',
       start_date:       s.start_date,
       auto_renewal:     !!s.auto_renewal,
       payment_status:   s.payment_status,
@@ -318,6 +319,7 @@ export default function Subscriptions() {
               <thead>
                 <tr>
                   <th style={{width:32}}></th>
+                  <th>Voucher</th>
                   <th>Txn Date</th>
                   <th>Customer</th>
                   <th>Service</th>
@@ -345,6 +347,12 @@ export default function Subscriptions() {
                         <td style={{fontSize:'0.8rem', color:'var(--text2)', whiteSpace:'nowrap'}}>
                           <div style={{fontWeight:500}}>{fmtDate(s.transaction_date || s.start_date)}</div>
                           <div style={{fontSize:'0.68rem', color:'var(--text3)'}}>Txn Date</div>
+                        </td>
+                        <td style={{fontSize:'0.78rem', color:'var(--text2)', whiteSpace:'nowrap'}}>
+                          {s.voucher_no
+                            ? <span style={{fontWeight:600, color:'var(--text)', background:'var(--surface2)', border:'1px solid var(--border)', borderRadius:4, padding:'1px 6px', fontSize:'0.72rem'}}>{s.voucher_no}</span>
+                            : <span style={{color:'var(--text3)'}}>—</span>
+                          }
                         </td>
                         <td>
                           <div style={{fontWeight:600}}>{s.customer_name}</div>
@@ -379,7 +387,7 @@ export default function Subscriptions() {
                       {/* Expanded user rows */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={10} style={{padding:0, background:'#f8fafc', borderBottom:'2px solid var(--border)'}}>
+                          <td colSpan={11} style={{padding:0, background:'#f8fafc', borderBottom:'2px solid var(--border)'}}>
                             <div style={{padding:'0.75rem 1.5rem 0.75rem 3rem'}}>
                               {s.is_user_based === 0 ? (
                                 // Non-user-based: show contract details
@@ -483,26 +491,33 @@ export default function Subscriptions() {
                 {formErr && <div className="form-error">{formErr}</div>}
                 <div className="form-grid">
 
-                  {/* Transaction Date — Tally style voucher date */}
+                  {/* Transaction Date + Voucher No */}
                   <div style={{
                     background:'rgba(245,158,11,0.06)',
                     border:'1px solid rgba(245,158,11,0.25)',
                     borderRadius:'var(--r)',
                     padding:'0.75rem 1rem',
-                    display:'flex', alignItems:'center', gap:'1rem'
                   }}>
-                    <span style={{fontSize:'1.1rem'}}>🧾</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:600, fontSize:'0.85rem', color:'var(--text)', marginBottom:'0.4rem'}}>
-                        Transaction Date <span style={{color:'var(--text3)', fontWeight:400, fontSize:'0.78rem'}}>(Voucher Date — je diwshi deal/payment zali)</span>
+                    <div style={{display:'flex', alignItems:'center', gap:'0.5rem', marginBottom:'0.6rem'}}>
+                      <span style={{fontSize:'1.1rem'}}>🧾</span>
+                      <span style={{fontWeight:600, fontSize:'0.85rem', color:'var(--text)'}}>
+                        Voucher Details
+                      </span>
+                    </div>
+                    <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.75rem'}}>
+                      <div className="form-group" style={{margin:0}}>
+                        <label className="form-label">Transaction Date <span style={{color:'var(--text3)',fontWeight:400,fontSize:'0.72rem'}}>(Voucher Date)</span></label>
+                        <input className="form-input" type="date"
+                          value={form.transaction_date}
+                          onChange={f('transaction_date')} />
                       </div>
-                      <input
-                        className="form-input"
-                        type="date"
-                        value={form.transaction_date}
-                        onChange={f('transaction_date')}
-                        style={{maxWidth:200, marginBottom:0}}
-                      />
+                      <div className="form-group" style={{margin:0}}>
+                        <label className="form-label">Voucher Number</label>
+                        <input className="form-input"
+                          placeholder="e.g. VCH/2026-27/001"
+                          value={form.voucher_no}
+                          onChange={f('voucher_no')} />
+                      </div>
                     </div>
                   </div>
 

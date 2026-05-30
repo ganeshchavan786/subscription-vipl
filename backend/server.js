@@ -107,6 +107,12 @@ try {
   console.log('✅ Migrated: transaction_date column added');
 } catch(e) {}
 
+// Migrate: add voucher_no column
+try {
+  db.exec(`ALTER TABLE subscriptions ADD COLUMN voucher_no TEXT`);
+  console.log('✅ Migrated: voucher_no column added');
+} catch(e) {}
+
 // Migrate: add price column to subscription_users if not exists
 try {
   db.exec(`ALTER TABLE subscription_users ADD COLUMN price REAL NOT NULL DEFAULT 0`);
@@ -321,7 +327,7 @@ app.get('/api/subscriptions', auth, (req, res) => {
 
 app.post('/api/subscriptions', auth, (req, res) => {
   try {
-    const { customer_id, product_id, price, num_users, billing_period, start_date, transaction_date, auto_renewal, payment_status, notes, sub_users, is_user_based } = req.body;
+    const { customer_id, product_id, price, num_users, billing_period, start_date, transaction_date, auto_renewal, payment_status, notes, sub_users, is_user_based, voucher_no } = req.body;
     if (!customer_id || !product_id) return res.status(400).json({ message: 'Customer and product required.' });
     if (!start_date) return res.status(400).json({ message: 'Start date required.' });
 
@@ -334,9 +340,9 @@ app.post('/api/subscriptions', auth, (req, res) => {
     const userBased = is_user_based ? 1 : 0;
     const txnDate = transaction_date || start_date;
 
-    db.run(`INSERT INTO subscriptions (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based,transaction_date)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [req.user.id, customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, status, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased, txnDate]);
+    db.run(`INSERT INTO subscriptions (user_id,customer_id,product_id,price,num_users,billing_period,start_date,end_date,status,auto_renewal,payment_status,notes,is_user_based,transaction_date,voucher_no)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [req.user.id, customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, status, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased, txnDate, voucher_no||'']);
 
     const newSub = db.get('SELECT id FROM subscriptions WHERE rowid=last_insert_rowid()');
     const subId = newSub.id;
@@ -369,7 +375,7 @@ app.put('/api/subscriptions/:id', auth, (req, res) => {
     const exists = db.get('SELECT id FROM subscriptions WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
     if (!exists) return res.status(404).json({ message: 'Subscription not found.' });
 
-    const { customer_id, product_id, price, num_users, billing_period, start_date, transaction_date, auto_renewal, payment_status, notes, status, sub_users, is_user_based } = req.body;
+    const { customer_id, product_id, price, num_users, billing_period, start_date, transaction_date, auto_renewal, payment_status, notes, status, sub_users, is_user_based, voucher_no } = req.body;
     const end_date = calcEndDate(start_date, billing_period);
     const today = new Date().toISOString().split('T')[0];
     const computedStatus = status === 'cancelled' ? 'cancelled' : (end_date < today ? 'expired' : 'active');
@@ -377,8 +383,8 @@ app.put('/api/subscriptions/:id', auth, (req, res) => {
     const txnDate = transaction_date || start_date;
 
     db.run(`UPDATE subscriptions SET customer_id=?,product_id=?,price=?,num_users=?,billing_period=?,start_date=?,end_date=?,
-      status=?,auto_renewal=?,payment_status=?,notes=?,is_user_based=?,transaction_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?`,
-      [customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, computedStatus, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased, txnDate, req.params.id, req.user.id]);
+      status=?,auto_renewal=?,payment_status=?,notes=?,is_user_based=?,transaction_date=?,voucher_no=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?`,
+      [customer_id, product_id, price||0, parseInt(num_users)||1, billing_period, start_date, end_date, computedStatus, auto_renewal?1:0, payment_status||'unpaid', notes||'', userBased, txnDate, voucher_no||'', req.params.id, req.user.id]);
 
     // Replace sub_users only if user-based
     db.run('DELETE FROM subscription_users WHERE subscription_id=?', [req.params.id]);
@@ -752,6 +758,7 @@ app.get('/api/reports/fy-expiry', auth, (req, res) => {
         end_date: row.end_date,
         transaction_date: row.transaction_date,
         billing_period: row.billing_period,
+        voucher_no: row.voucher_no,
       });
       fy.months[mKey].count++;
       fy.months[mKey].revenue += row.price || 0;
@@ -862,6 +869,7 @@ app.get('/api/reports/fy', auth, (req, res) => {
         end_date: row.end_date,
         transaction_date: row.transaction_date,
         billing_period: row.billing_period,
+        voucher_no: row.voucher_no,
       });
       fy.months[mKey].count++;
       fy.months[mKey].revenue += row.price || 0;
