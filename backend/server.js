@@ -300,7 +300,13 @@ app.delete('/api/customers/:id', auth, (req, res) => {
 // ─── SUBSCRIPTIONS CRUD ───────────────────────────────────────────────────────
 app.get('/api/subscriptions', auth, (req, res) => {
   syncStatus();
-  const { status, payment_status, search } = req.query;
+  const {
+    status, payment_status, search,
+    billing_period, customer_id, product_id,
+    fy, year, date_from, date_to,
+    expiring_days, is_user_based, voucher_no,
+  } = req.query;
+
   let q = `
     SELECT s.*, c.name as customer_name, c.email as customer_email, c.phone as customer_phone,
            p.name as product_name
@@ -310,13 +316,52 @@ app.get('/api/subscriptions', auth, (req, res) => {
     WHERE s.user_id = ?
   `;
   const params = [req.user.id];
+
   if (status)         { q += ' AND s.status=?';         params.push(status); }
   if (payment_status) { q += ' AND s.payment_status=?'; params.push(payment_status); }
-  if (search)         { q += ' AND (c.name LIKE ? OR p.name LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
-  q += ' ORDER BY s.end_date ASC';
+  if (billing_period) { q += ' AND s.billing_period=?'; params.push(billing_period); }
+  if (customer_id)    { q += ' AND s.customer_id=?';    params.push(customer_id); }
+  if (product_id)     { q += ' AND s.product_id=?';     params.push(product_id); }
+  if (voucher_no)     { q += ' AND s.voucher_no LIKE ?'; params.push(`%${voucher_no}%`); }
+  if (is_user_based !== undefined && is_user_based !== '') {
+    q += ' AND s.is_user_based=?'; params.push(is_user_based === '1' ? 1 : 0);
+  }
+  if (search) {
+    q += ' AND (c.name LIKE ? OR p.name LIKE ? OR s.voucher_no LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+
+  // Financial Year filter (Apr-Mar) — based on transaction_date
+  if (fy) {
+    const fyStart = parseInt(fy);
+    q += ` AND ((strftime('%m', s.transaction_date) >= '04' AND strftime('%Y', s.transaction_date) = ?)
+            OR  (strftime('%m', s.transaction_date) < '04'  AND strftime('%Y', s.transaction_date) = ?))`;
+    params.push(String(fyStart), String(fyStart + 1));
+  }
+
+  // Calendar year filter
+  if (year) {
+    q += ` AND strftime('%Y', s.transaction_date) = ?`;
+    params.push(year);
+  }
+
+  // Date range filter
+  if (date_from) { q += ' AND s.transaction_date >= ?'; params.push(date_from); }
+  if (date_to)   { q += ' AND s.transaction_date <= ?'; params.push(date_to); }
+
+  // Expiring in N days
+  if (expiring_days) {
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + parseInt(expiring_days));
+    const futureDateStr = futureDate.toISOString().split('T')[0];
+    const todayStr = new Date().toISOString().split('T')[0];
+    q += ` AND s.end_date >= ? AND s.end_date <= ? AND s.status='active'`;
+    params.push(todayStr, futureDateStr);
+  }
+
+  q += ' ORDER BY s.transaction_date DESC, s.end_date ASC';
   const subs = db.all(q, params);
 
-  // Attach subscription_users to each subscription
   const result = subs.map(s => ({
     ...s,
     sub_users: db.all('SELECT * FROM subscription_users WHERE subscription_id=? ORDER BY start_date ASC', [s.id])

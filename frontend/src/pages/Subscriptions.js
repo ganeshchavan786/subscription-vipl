@@ -59,7 +59,13 @@ export default function Subscriptions() {
   const [formErr, setFormErr]     = useState('');
   const [deleteId, setDeleteId]   = useState(null);
   const [toast, showToast]        = useToast();
-  const [filters, setFilters]     = useState({ status: '', payment_status: '', search: '' });
+  const [filters, setFilters] = useState({
+    status: '', payment_status: '', search: '',
+    billing_period: '', customer_id: '', product_id: '',
+    fy: '', year: '', date_from: '', date_to: '',
+    expiring_days: '', is_user_based: '',
+  });
+  const [showAdvFilter, setShowAdvFilter] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -81,6 +87,15 @@ export default function Subscriptions() {
       if (f.status)         params.status         = f.status;
       if (f.payment_status) params.payment_status = f.payment_status;
       if (f.search)         params.search         = f.search;
+      if (f.billing_period) params.billing_period = f.billing_period;
+      if (f.customer_id)    params.customer_id    = f.customer_id;
+      if (f.product_id)     params.product_id     = f.product_id;
+      if (f.fy)             params.fy             = f.fy;
+      if (f.year)           params.year           = f.year;
+      if (f.date_from)      params.date_from      = f.date_from;
+      if (f.date_to)        params.date_to        = f.date_to;
+      if (f.expiring_days)  params.expiring_days  = f.expiring_days;
+      if (f.is_user_based !== '') params.is_user_based = f.is_user_based;
       const r = await getSubscriptions(params);
       setSubs(r.data.subscriptions);
     } catch { showToast('Failed to load subscriptions.'); }
@@ -265,8 +280,29 @@ export default function Subscriptions() {
 
   const setFilter = (k, v) => setFilters(f => ({ ...f, [k]: v }));
   const f = k => e => setForm(prev => ({ ...prev, [k]: e.target.value }));
-
   const daysLeft = (endDate) => Math.ceil((new Date(endDate) - new Date()) / (1000*60*60*24));
+
+  // Generate FY options from 2020 to current+1
+  const currentYear = new Date().getFullYear();
+  const fyOptions = [];
+  for (let y = 2020; y <= currentYear + 1; y++) {
+    fyOptions.push({ value: String(y), label: `FY ${y}-${String(y+1).slice(2)}` });
+  }
+  const yearOptions = [];
+  for (let y = 2020; y <= currentYear + 1; y++) yearOptions.push(y);
+
+  const activeFilterCount = [
+    filters.status, filters.payment_status, filters.billing_period,
+    filters.customer_id, filters.product_id, filters.fy, filters.year,
+    filters.date_from, filters.date_to, filters.expiring_days, filters.is_user_based
+  ].filter(Boolean).length;
+
+  const clearAllFilters = () => setFilters({
+    status: '', payment_status: '', search: '',
+    billing_period: '', customer_id: '', product_id: '',
+    fy: '', year: '', date_from: '', date_to: '',
+    expiring_days: '', is_user_based: '',
+  });
 
   return (
     <Layout>
@@ -284,17 +320,19 @@ export default function Subscriptions() {
       </div>
 
       <div className="page-body">
-        <div className="toolbar">
-          <div className="toolbar-left">
+        {/* Filters */}
+        <div style={{ marginBottom: '1.1rem' }}>
+          {/* Row 1 — Basic filters */}
+          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.5rem' }}>
             <div className="search-box">
-              <input placeholder="Search customer or service..."
+              <input placeholder="Search customer, service, voucher..."
                 value={filters.search} onChange={e => setFilter('search', e.target.value)} />
             </div>
             <select className="filter-select" value={filters.status} onChange={e => setFilter('status', e.target.value)}>
               <option value="">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="expired">Expired</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="active">● Active</option>
+              <option value="expired">✕ Expired</option>
+              <option value="cancelled">◌ Cancelled</option>
             </select>
             <select className="filter-select" value={filters.payment_status} onChange={e => setFilter('payment_status', e.target.value)}>
               <option value="">All Payments</option>
@@ -302,7 +340,66 @@ export default function Subscriptions() {
               <option value="unpaid">Unpaid</option>
               <option value="partial">Partial</option>
             </select>
+            <select className="filter-select" value={filters.fy} onChange={e => { setFilter('fy', e.target.value); if(e.target.value) setFilter('year',''); }}>
+              <option value="">All FY</option>
+              {fyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <select className="filter-select" value={filters.year} onChange={e => { setFilter('year', e.target.value); if(e.target.value) setFilter('fy',''); }}>
+              <option value="">All Years</option>
+              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <button className="btn-ghost btn-sm" onClick={() => setShowAdvFilter(v => !v)}
+              style={{ borderColor: showAdvFilter ? 'var(--accent)' : undefined, color: showAdvFilter ? 'var(--accent)' : undefined }}>
+              ⚙ More {activeFilterCount > 0 && <span style={{ background:'var(--accent)', color:'white', borderRadius:'50%', padding:'0 5px', fontSize:'0.65rem', marginLeft:3 }}>{activeFilterCount}</span>}
+            </button>
+            {activeFilterCount > 0 && (
+              <button className="btn-ghost btn-sm" onClick={clearAllFilters} style={{ color:'var(--red)', borderColor:'rgba(220,38,38,0.3)' }}>
+                ✕ Clear All
+              </button>
+            )}
           </div>
+
+          {/* Row 2 — Advanced filters */}
+          {showAdvFilter && (
+            <div style={{ display:'flex', gap:'0.6rem', flexWrap:'wrap', alignItems:'center', padding:'0.75rem', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--r)' }}>
+              <select className="filter-select" value={filters.billing_period} onChange={e => setFilter('billing_period', e.target.value)}>
+                <option value="">All Billing</option>
+                <option value="daily">Daily</option>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="half_yearly">Half-Yearly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+              <select className="filter-select" value={filters.customer_id} onChange={e => setFilter('customer_id', e.target.value)}>
+                <option value="">All Customers</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select className="filter-select" value={filters.product_id} onChange={e => setFilter('product_id', e.target.value)}>
+                <option value="">All Products</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <select className="filter-select" value={filters.is_user_based} onChange={e => setFilter('is_user_based', e.target.value)}>
+                <option value="">All Types</option>
+                <option value="1">👤 User-based</option>
+                <option value="0">📋 AMC / Contract</option>
+              </select>
+              <select className="filter-select" value={filters.expiring_days} onChange={e => setFilter('expiring_days', e.target.value)}>
+                <option value="">Any Expiry</option>
+                <option value="7">Expiring in 7 days</option>
+                <option value="30">Expiring in 30 days</option>
+                <option value="60">Expiring in 60 days</option>
+                <option value="90">Expiring in 90 days</option>
+              </select>
+              <div style={{ display:'flex', alignItems:'center', gap:'0.4rem' }}>
+                <span style={{ fontSize:'0.78rem', color:'var(--text3)', whiteSpace:'nowrap' }}>Txn Date:</span>
+                <input type="date" className="filter-select" style={{ padding:'0.45rem 0.6rem' }}
+                  value={filters.date_from} onChange={e => setFilter('date_from', e.target.value)} />
+                <span style={{ fontSize:'0.78rem', color:'var(--text3)' }}>to</span>
+                <input type="date" className="filter-select" style={{ padding:'0.45rem 0.6rem' }}
+                  value={filters.date_to} onChange={e => setFilter('date_to', e.target.value)} />
+              </div>
+            </div>
+          )}
         </div>
 
         {loading ? <div className="loader-wrap"><div className="spinner" /></div>
