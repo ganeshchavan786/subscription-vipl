@@ -286,6 +286,11 @@ export default function Subscriptions() {
   const [sortKey, setSortKey] = useState('transaction_date');
   const [sortDir, setSortDir] = useState('desc');
 
+  // View mode
+  const [viewMode, setViewMode] = useState('list');
+  const [expandedFY, setExpandedFY] = useState(null);
+  const [expandedMonth, setExpandedMonth] = useState(null);
+
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
@@ -336,7 +341,21 @@ export default function Subscriptions() {
           <h1 className="page-title">Subscriptions</h1>
           <p className="page-sub">{subs.length} subscription{subs.length !== 1 ? 's' : ''} found</p>
         </div>
-        <div style={{display:'flex', gap:'0.6rem'}}>
+        <div style={{display:'flex', gap:'0.6rem', alignItems:'center'}}>
+          <div style={{display:'flex', background:'var(--surface2)', border:'1px solid var(--border)', borderRadius:'var(--r)', padding:'2px', gap:'2px'}}>
+            <button onClick={() => setViewMode('list')} style={{
+              padding:'0.35rem 0.75rem', borderRadius:6, border:'none', cursor:'pointer',
+              fontSize:'0.8rem', fontWeight:600, transition:'all 0.15s',
+              background: viewMode==='list' ? 'var(--accent)' : 'transparent',
+              color: viewMode==='list' ? 'white' : 'var(--text2)',
+            }}>📋 List</button>
+            <button onClick={() => setViewMode('year')} style={{
+              padding:'0.35rem 0.75rem', borderRadius:6, border:'none', cursor:'pointer',
+              fontSize:'0.8rem', fontWeight:600, transition:'all 0.15s',
+              background: viewMode==='year' ? 'var(--accent)' : 'transparent',
+              color: viewMode==='year' ? 'white' : 'var(--text2)',
+            }}>📅 Year</button>
+          </div>
           <button className="btn-ghost" onClick={() => setImportOpen(true)}>📥 Import Excel</button>
           <button className="btn-primary" onClick={openAdd}>+ New Subscription</button>
         </div>
@@ -433,6 +452,17 @@ export default function Subscriptions() {
             <p>Try clearing filters or add a new subscription.</p>
             <button className="btn-primary" onClick={openAdd}>+ New Subscription</button>
           </div>
+        ) : viewMode === 'year' ? (
+          <YearView
+            subs={sortedSubs}
+            expandedFY={expandedFY}
+            setExpandedFY={setExpandedFY}
+            expandedMonth={expandedMonth}
+            setExpandedMonth={setExpandedMonth}
+            onEdit={openEdit}
+            onDelete={setDeleteId}
+            onRenew={handleRenew}
+          />
         ) : (
           <div className="table-wrap">
             <table className="data-table">
@@ -597,8 +627,6 @@ export default function Subscriptions() {
           </div>
         )}
       </div>
-
-      {/* Add/Edit Modal */}
       {modal && (
         <div className="modal-overlay">
           <div className="modal modal-xl">
@@ -1031,3 +1059,167 @@ export default function Subscriptions() {
 // Inline table styles for expanded rows
 const thS = { padding:'0.45rem 0.75rem', fontSize:'0.68rem', fontWeight:700, color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.07em', textAlign:'left', borderBottom:'1px solid var(--border)' };
 const tdS = { padding:'0.5rem 0.75rem', fontSize:'0.82rem', color:'var(--text)' };
+
+
+// ── YearView Component ──
+const fmt2 = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
+const MONTH_NAMES = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const FY_MONTHS = [3,4,5,6,7,8,9,10,11,0,1,2]; // APR→MAR (month indices)
+
+function getFYStart(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  const m = d.getMonth(), y = d.getFullYear();
+  return m >= 3 ? y : y - 1;
+}
+
+function YearView({ subs, expandedFY, setExpandedFY, expandedMonth, setExpandedMonth, onEdit, onDelete, onRenew }) {
+  // Group subs by FY
+  const fyMap = {};
+  for (const s of subs) {
+    const dateStr = s.transaction_date || s.start_date;
+    const fyStart = getFYStart(dateStr);
+    if (fyStart === null) continue;
+    if (!fyMap[fyStart]) {
+      fyMap[fyStart] = { fyStart, subs: [], revenue: 0, months: {} };
+      for (const mi of FY_MONTHS) {
+        const mYear = mi >= 3 ? fyStart : fyStart + 1;
+        const mKey = `${mYear}-${String(mi+1).padStart(2,'0')}`;
+        fyMap[fyStart].months[mKey] = { label: MONTH_NAMES[mi], mKey, subs: [], revenue: 0 };
+      }
+    }
+    fyMap[fyStart].subs.push(s);
+    fyMap[fyStart].revenue += s.price || 0;
+    const mKey = dateStr.slice(0,7);
+    if (fyMap[fyStart].months[mKey]) {
+      fyMap[fyStart].months[mKey].subs.push(s);
+      fyMap[fyStart].months[mKey].revenue += s.price || 0;
+    }
+  }
+
+  const fyList = Object.values(fyMap).sort((a,b) => b.fyStart - a.fyStart);
+  const currentFYStart = getFYStart(new Date().toISOString().split('T')[0]);
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+      {fyList.map(fy => {
+        const isOpen = expandedFY === fy.fyStart;
+        const isCurrent = fy.fyStart === currentFYStart;
+        const months = Object.values(fy.months);
+        const selMonth = expandedMonth && expandedMonth.fy === fy.fyStart ? expandedMonth.mKey : null;
+
+        return (
+          <div key={fy.fyStart} style={{background:'var(--surface)',border:`2px solid ${isCurrent?'var(--accent)':'var(--border)'}`,borderRadius:'var(--r-lg)',overflow:'hidden',boxShadow:'var(--shadow-sm)'}}>
+            {/* FY Header */}
+            <div onClick={() => { setExpandedFY(isOpen ? null : fy.fyStart); setExpandedMonth(null); }}
+              style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0.9rem 1.25rem',cursor:'pointer',background:isOpen?'var(--surface2)':'var(--surface)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
+                <span style={{fontSize:'0.9rem'}}>{isOpen ? '▼' : '▶'}</span>
+                <div>
+                  <div style={{fontFamily:'Space Grotesk,sans-serif',fontWeight:700,fontSize:'1rem',color:isCurrent?'var(--accent)':'var(--text)'}}>
+                    FY {fy.fyStart}-{String(fy.fyStart+1).slice(2)}
+                    {isCurrent && <span style={{marginLeft:8,fontSize:'0.65rem',background:'var(--accent)',color:'white',borderRadius:4,padding:'1px 6px'}}>CURRENT</span>}
+                  </div>
+                  <div style={{fontSize:'0.75rem',color:'var(--text3)',marginTop:2}}>
+                    APR {fy.fyStart} — MAR {fy.fyStart+1}
+                  </div>
+                </div>
+              </div>
+              <div style={{display:'flex',gap:'0.6rem',alignItems:'center'}}>
+                <span style={{fontSize:'0.75rem',padding:'2px 10px',borderRadius:5,fontWeight:600,background:'var(--accent-dim)',color:'var(--accent)',border:'1px solid rgba(99,91,255,0.2)'}}>
+                  {fmt2(fy.revenue)}
+                </span>
+                <span style={{fontSize:'0.75rem',padding:'2px 10px',borderRadius:5,fontWeight:600,background:'var(--surface3)',color:'var(--text2)',border:'1px solid var(--border2)'}}>
+                  {fy.subs.length} subs
+                </span>
+              </div>
+            </div>
+
+            {/* Month Grid */}
+            {isOpen && (
+              <div style={{padding:'1rem 1.25rem',borderTop:'1px solid var(--border)'}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(12,1fr)',gap:'0.4rem',marginBottom:'1rem'}}>
+                  {months.map(m => {
+                    const isSel = selMonth === m.mKey;
+                    const isEmpty = m.subs.length === 0;
+                    return (
+                      <div key={m.mKey}
+                        onClick={() => { if(isEmpty) return; setExpandedMonth(isSel ? null : {fy:fy.fyStart,mKey:m.mKey}); }}
+                        style={{
+                          borderRadius:'var(--r)',border:`1px solid ${isSel?'var(--accent)':isEmpty?'var(--border)':'var(--border2)'}`,
+                          padding:'0.5rem 0.25rem',textAlign:'center',cursor:isEmpty?'default':'pointer',
+                          background:isSel?'var(--accent)':isEmpty?'var(--surface2)':'var(--surface)',
+                          opacity:isEmpty?0.45:1,transition:'all 0.15s',
+                          transform:isSel?'translateY(-2px)':'none',
+                          boxShadow:isSel?'0 4px 12px rgba(99,91,255,0.25)':'none',
+                        }}>
+                        <div style={{fontSize:'0.68rem',fontWeight:700,color:isSel?'white':'var(--text)',marginBottom:2}}>{m.label}</div>
+                        {!isEmpty && <>
+                          <div style={{fontSize:'0.6rem',fontWeight:700,color:isSel?'rgba(255,255,255,0.9)':'var(--accent)'}}>{fmt2(m.revenue)}</div>
+                          <div style={{fontSize:'0.55rem',color:isSel?'rgba(255,255,255,0.7)':'var(--text3)'}}>{m.subs.length} sub{m.subs.length!==1?'s':''}</div>
+                        </>}
+                        {isEmpty && <div style={{fontSize:'0.55rem',color:'var(--text3)'}}>—</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Month Detail Table */}
+                {selMonth && (() => {
+                  const mData = fy.months[selMonth];
+                  if (!mData) return null;
+                  const total = mData.subs.reduce((s,x)=>s+(x.price||0),0);
+                  return (
+                    <div style={{border:'1px solid var(--border)',borderRadius:'var(--r-lg)',overflow:'hidden'}}>
+                      <div style={{padding:'0.75rem 1rem',background:'var(--surface2)',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                        <div style={{fontWeight:700,fontSize:'0.9rem'}}>{mData.label} {selMonth.split('-')[0]}</div>
+                        <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
+                          <span style={{fontSize:'0.72rem',padding:'2px 8px',borderRadius:5,fontWeight:600,background:'var(--accent-dim)',color:'var(--accent)',border:'1px solid rgba(99,91,255,0.2)'}}>{fmt2(total)}</span>
+                          <span style={{fontSize:'0.72rem',color:'var(--text3)'}}>{mData.subs.length} subscriptions</span>
+                          <button onClick={()=>setExpandedMonth(null)} style={{background:'var(--surface3)',border:'1px solid var(--border)',borderRadius:5,padding:'2px 7px',cursor:'pointer',fontSize:'0.72rem',color:'var(--text2)'}}>✕</button>
+                        </div>
+                      </div>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>#</th><th>Voucher</th><th>Txn Date</th><th>Customer</th><th>Service</th><th>Price</th><th>Status</th><th>Payment</th><th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mData.subs.map((s,i) => (
+                            <tr key={s.id}>
+                              <td style={{color:'var(--text3)'}}>{i+1}</td>
+                              <td style={{fontSize:'0.75rem'}}>{s.voucher_no ? <span style={{fontWeight:600,background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:4,padding:'1px 5px'}}>{s.voucher_no}</span> : '—'}</td>
+                              <td style={{fontSize:'0.8rem',color:'var(--text2)'}}>{fmtDate(s.transaction_date||s.start_date)}</td>
+                              <td><div style={{fontWeight:600}}>{s.customer_name}</div>{s.customer_phone&&<div style={{fontSize:'0.7rem',color:'var(--text3)'}}>{s.customer_phone}</div>}</td>
+                              <td style={{fontSize:'0.85rem'}}>{s.product_name}</td>
+                              <td style={{fontWeight:700,color:'var(--accent)'}}>{fmt2(s.price)}</td>
+                              <td><span className={`badge ${s.status==='active'?'badge-green':s.status==='expired'?'badge-red':'badge-gray'}`}>{s.status==='active'?'● Active':s.status==='expired'?'✕ Expired':'◌ '+s.status}</span></td>
+                              <td><span className={`badge ${s.payment_status==='paid'?'badge-green':s.payment_status==='partial'?'badge-yellow':'badge-red'}`}>{s.payment_status}</span></td>
+                              <td><div className="td-actions">
+                                <button className="btn-edit" onClick={()=>onEdit(s)}>✏️</button>
+                                {(s.status==='expired'||s.status==='cancelled')&&<button className="btn-renew" onClick={()=>onRenew(s.id)}>↻</button>}
+                                <button className="btn-del" onClick={()=>onDelete(s.id)}>🗑️</button>
+                              </div></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{background:'var(--accent-dim)'}}>
+                            <td colSpan={5} style={{padding:'0.65rem 1rem',fontWeight:700,textAlign:'right',color:'var(--text2)',fontSize:'0.85rem'}}>Total ({mData.subs.length} subscriptions)</td>
+                            <td style={{padding:'0.65rem 1rem',fontWeight:800,color:'var(--accent)',fontFamily:'Space Grotesk,sans-serif'}}>{fmt2(total)}</td>
+                            <td colSpan={3}/>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
