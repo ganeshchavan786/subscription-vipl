@@ -15,7 +15,8 @@ export default function Settings() {
   const [form, setForm] = useState({
     host:'', port:'587', secure:false, user:'', pass:'',
     from_name:'SubTrack Pro', from_email:'',
-    alert_7day:true, alert_1day:true, alert_expiry:true, notify_admin:false,
+    alert_7day:true, alert_1day:true, alert_expiry:true,
+    notify_customer:false, admin_emails:'',
   });
 
   useEffect(() => {
@@ -148,9 +149,19 @@ export default function Settings() {
                 Send alert on <strong>expiry day</strong>
               </label>
               <div style={{borderTop:'1px solid var(--border)',paddingTop:'0.75rem',marginTop:'0.25rem'}}>
-                <label className="form-check">
-                  <input type="checkbox" checked={form.notify_admin} onChange={f('notify_admin')}/>
-                  Also send alerts to admin account (<strong>{user?.email}</strong>)
+                <div className="form-group">
+                  <label className="form-label">Admin Alert Emails</label>
+                  <input className="form-input"
+                    placeholder="ganesh@vrushaliinfotech.com, manisha@vrushaliinfotech.com"
+                    value={form.admin_emails}
+                    onChange={f('admin_emails')}/>
+                  <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:3}}>
+                    Multiple emails — comma separated. Alerts will be sent to all.
+                  </div>
+                </div>
+                <label className="form-check" style={{marginTop:'0.65rem'}}>
+                  <input type="checkbox" checked={form.notify_customer} onChange={f('notify_customer')}/>
+                  Also send alerts to <strong>Customer's email</strong>
                 </label>
               </div>
               <div style={{background:'var(--surface2)',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:'0.65rem 0.85rem',fontSize:'0.78rem',color:'var(--text3)'}}>

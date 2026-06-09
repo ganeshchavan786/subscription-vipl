@@ -1334,7 +1334,8 @@ app.get('/api/settings/smtp', auth, (req, res) => {
       alert_7day: getSetting('alert_7day') !== '0',
       alert_1day: getSetting('alert_1day') !== '0',
       alert_expiry:getSetting('alert_expiry')!== '0',
-      notify_admin:getSetting('notify_admin')=== '1',
+      notify_customer: getSetting('notify_customer') === '1',
+      admin_emails: getSetting('admin_emails') || '',
     }
   });
 });
@@ -1352,7 +1353,8 @@ app.post('/api/settings/smtp', auth, (req, res) => {
   setSetting('alert_7day',      alert_7day  !== false ? '1' : '0');
   setSetting('alert_1day',      alert_1day  !== false ? '1' : '0');
   setSetting('alert_expiry',    alert_expiry!== false ? '1' : '0');
-  setSetting('notify_admin',    notify_admin ? '1' : '0');
+  setSetting('notify_customer', notify_customer ? '1' : '0');
+  setSetting('admin_emails',    req.body.admin_emails || '');
 
   // Only update password if provided (not masked)
   if (pass && pass !== '••••••••') {
@@ -1473,8 +1475,14 @@ async function sendRenewalEmail(transporter, cfg, sub, daysLeft, adminUser) {
     </div>`;
 
   const recipients = [];
-  if (sub.customer_email) recipients.push(sub.customer_email);
-  if (getSetting('notify_admin') === '1' && adminUser?.email) recipients.push(adminUser.email);
+  if (getSetting('notify_customer') === '1' && sub.customer_email) {
+    recipients.push(sub.customer_email);
+  }
+  // Admin emails — comma separated
+  const adminEmails = getSetting('admin_emails') || '';
+  adminEmails.split(',').map(e => e.trim()).filter(Boolean).forEach(e => {
+    if (!recipients.includes(e)) recipients.push(e);
+  });
   if (recipients.length === 0) return;
 
   try {
