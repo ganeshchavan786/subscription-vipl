@@ -33,6 +33,10 @@ export const createCustomer    = d => API.post('/customers', d);
 export const updateCustomer    = (id, d) => API.put(`/customers/${id}`, d);
 export const deleteCustomer    = id => API.delete(`/customers/${id}`);
 export const getCustomerProfile= id => API.get(`/customers/${id}/profile`);
+export const getCustomerContacts   = id  => API.get(`/customers/${id}/contacts`);
+export const addCustomerContact    = (id,d) => API.post(`/customers/${id}/contacts`, d);
+export const updateCustomerContact = (cid,d) => API.put(`/customers/contacts/${cid}`, d);
+export const deleteCustomerContact = cid => API.delete(`/customers/contacts/${cid}`);
 
 export const getSubscriptions  = (p) => API.get('/subscriptions', { params: p || {} });
 export const createSubscription= d => API.post('/subscriptions', d);

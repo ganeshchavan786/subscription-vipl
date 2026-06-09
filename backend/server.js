@@ -87,6 +87,18 @@ db.exec(`
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS customer_contacts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    type        TEXT    NOT NULL,
+    value       TEXT    NOT NULL,
+    label       TEXT    DEFAULT '',
+    is_primary  INTEGER DEFAULT 0,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+  );
 `);
 
 // Save DB to file on process exit
@@ -112,6 +124,25 @@ try {
   db.exec(`ALTER TABLE subscriptions ADD COLUMN voucher_no TEXT`);
   console.log('✅ Migrated: voucher_no column added');
 } catch(e) {}
+
+// Migrate: copy existing phone/email to customer_contacts
+try {
+  const migrated = db.get(`SELECT COUNT(*) as c FROM customer_contacts`);
+  if (migrated.c === 0) {
+    const customers = db.all(`SELECT id, user_id, phone, email FROM customers WHERE (phone != '' OR email != '')`);
+    for (const c of customers) {
+      if (c.phone && c.phone.trim()) {
+        db.run(`INSERT INTO customer_contacts (customer_id,user_id,type,value,label,is_primary) VALUES (?,?,?,?,?,?)`,
+          [c.id, c.user_id, 'phone', c.phone.trim(), 'Primary', 1]);
+      }
+      if (c.email && c.email.trim()) {
+        db.run(`INSERT INTO customer_contacts (customer_id,user_id,type,value,label,is_primary) VALUES (?,?,?,?,?,?)`,
+          [c.id, c.user_id, 'email', c.email.trim(), 'Primary', 1]);
+      }
+    }
+    console.log(`✅ Migrated: existing phone/email to customer_contacts`);
+  }
+} catch(e) { console.log('Contact migration skip:', e.message); }
 
 // Migrate: add price column to subscription_users if not exists
 try {
@@ -265,7 +296,10 @@ app.get('/api/customers', auth, (req, res) => {
 
   const result = customers.map(c => {
     const rev = revenues.find(r => r.id === c.id)?.rev || 0;
-    return { ...c, total_revenue: rev, rating: total > 0 ? getRating(rev) : null };
+    const contacts = db.all('SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY is_primary DESC, id ASC', [c.id]);
+    const primaryPhone = contacts.find(x => x.type==='phone' && x.is_primary)?.value || contacts.find(x=>x.type==='phone')?.value || c.phone || '';
+    const primaryEmail = contacts.find(x => x.type==='email' && x.is_primary)?.value || contacts.find(x=>x.type==='email')?.value || c.email || '';
+    return { ...c, total_revenue: rev, rating: total > 0 ? getRating(rev) : null, contacts, phone: primaryPhone, email: primaryEmail };
   });
 
   res.json({ customers: result });
@@ -315,6 +349,48 @@ app.delete('/api/customers/:id', auth, (req, res) => {
   const exists = db.get('SELECT id FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
   if (!exists) return res.status(404).json({ message: 'Customer not found.' });
   db.run('DELETE FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  res.json({ message: 'Deleted.' });
+});
+
+// Customer Contacts CRUD
+app.get('/api/customers/:id/contacts', auth, (req, res) => {
+  const exists = db.get('SELECT id FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Customer not found.' });
+  const contacts = db.all('SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY is_primary DESC, type ASC, id ASC', [req.params.id]);
+  res.json({ contacts });
+});
+
+app.post('/api/customers/:id/contacts', auth, (req, res) => {
+  const { type, value, label, is_primary } = req.body;
+  if (!type || !value) return res.status(400).json({ message: 'type and value required.' });
+  const exists = db.get('SELECT id FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+  if (!exists) return res.status(404).json({ message: 'Customer not found.' });
+  // If new primary → unset old primary of same type
+  if (is_primary) {
+    db.run('UPDATE customer_contacts SET is_primary=0 WHERE customer_id=? AND type=?', [req.params.id, type]);
+  }
+  db.run('INSERT INTO customer_contacts (customer_id,user_id,type,value,label,is_primary) VALUES (?,?,?,?,?,?)',
+    [req.params.id, req.user.id, type, value.trim(), label||'', is_primary?1:0]);
+  const contact = db.get('SELECT * FROM customer_contacts WHERE rowid=last_insert_rowid()');
+  res.status(201).json({ contact });
+});
+
+app.put('/api/customers/contacts/:contactId', auth, (req, res) => {
+  const { value, label, is_primary } = req.body;
+  const contact = db.get('SELECT * FROM customer_contacts WHERE id=? AND user_id=?', [req.params.contactId, req.user.id]);
+  if (!contact) return res.status(404).json({ message: 'Contact not found.' });
+  if (is_primary) {
+    db.run('UPDATE customer_contacts SET is_primary=0 WHERE customer_id=? AND type=?', [contact.customer_id, contact.type]);
+  }
+  db.run('UPDATE customer_contacts SET value=?,label=?,is_primary=? WHERE id=?',
+    [value||contact.value, label||contact.label, is_primary?1:0, req.params.contactId]);
+  res.json({ contact: db.get('SELECT * FROM customer_contacts WHERE id=?', [req.params.contactId]) });
+});
+
+app.delete('/api/customers/contacts/:contactId', auth, (req, res) => {
+  const contact = db.get('SELECT * FROM customer_contacts WHERE id=? AND user_id=?', [req.params.contactId, req.user.id]);
+  if (!contact) return res.status(404).json({ message: 'Contact not found.' });
+  db.run('DELETE FROM customer_contacts WHERE id=?', [req.params.contactId]);
   res.json({ message: 'Deleted.' });
 });
 

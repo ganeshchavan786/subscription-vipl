@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from '../components/Layout';
 import { Toast, ConfirmModal, useToast } from '../components/Shared';
-import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '../api';
+import { getCustomers, createCustomer, updateCustomer, deleteCustomer, addCustomerContact, deleteCustomerContact } from '../api';
 import ImportModal from '../components/ImportModal';
 import { useNavigate } from 'react-router-dom';
 
-const EMPTY = { name:'', email:'', phone:'', notes:'' };
+const EMPTY = { name:'', email:'', phone:'', notes:'', phones:[{value:'',label:'Primary'}], emails:[{value:'',label:'Primary'}] };
 
 export default function Customers() {
   const [customers, setCustomers] = useState([]);
@@ -31,13 +31,54 @@ export default function Customers() {
   useEffect(() => { const t = setTimeout(() => load(search), 350); return () => clearTimeout(t); }, [search, load]);
 
   const openAdd = () => { setEditing(null); setForm(EMPTY); setFormErr(''); setModal(true); };
-  const openEdit = c => { setEditing(c); setForm({ name:c.name, email:c.email||'', phone:c.phone||'', notes:c.notes||'' }); setFormErr(''); setModal(true); };
+  const openEdit = c => {
+    const phones = (c.contacts||[]).filter(x=>x.type==='phone').map(x=>({id:x.id,value:x.value,label:x.label||'',is_primary:x.is_primary}));
+    const emails = (c.contacts||[]).filter(x=>x.type==='email').map(x=>({id:x.id,value:x.value,label:x.label||'',is_primary:x.is_primary}));
+    setEditing(c);
+    setForm({
+      name:c.name, email:c.email||'', phone:c.phone||'', notes:c.notes||'',
+      phones: phones.length>0 ? phones : [{value:c.phone||'',label:'Primary'}],
+      emails: emails.length>0 ? emails : [{value:c.email||'',label:'Primary'}],
+    });
+    setFormErr(''); setModal(true);
+  };
 
   const handleSave = async e => {
     e.preventDefault(); setFormErr(''); setSaving(true);
     try {
-      if (editing) await updateCustomer(editing.id, form);
-      else await createCustomer(form);
+      // Primary phone/email for backward compat
+      const primaryPhone = form.phones.find(p=>p.value.trim())?.[0]?.value || form.phones[0]?.value || '';
+      const primaryEmail = form.emails.find(e=>e.value.trim())?.[0]?.value || form.emails[0]?.value || '';
+      const payload = { name: form.name, phone: form.phones[0]?.value||'', email: form.emails[0]?.value||'', notes: form.notes };
+
+      let savedCustomer;
+      if (editing) {
+        await updateCustomer(editing.id, payload);
+        savedCustomer = { id: editing.id };
+      } else {
+        const r = await createCustomer(payload);
+        savedCustomer = r.data.customer;
+      }
+
+      // Save contacts
+      const cid = savedCustomer.id;
+      // Delete old contacts if editing
+      if (editing && editing.contacts) {
+        for (const c of editing.contacts) {
+          await deleteCustomerContact(c.id).catch(()=>{});
+        }
+      }
+      // Add all phones
+      for (let i=0; i<form.phones.length; i++) {
+        const p = form.phones[i];
+        if (p.value.trim()) await addCustomerContact(cid, { type:'phone', value:p.value.trim(), label:p.label||'Primary', is_primary: i===0?1:0 });
+      }
+      // Add all emails
+      for (let i=0; i<form.emails.length; i++) {
+        const e = form.emails[i];
+        if (e.value.trim()) await addCustomerContact(cid, { type:'email', value:e.value.trim(), label:e.label||'Primary', is_primary: i===0?1:0 });
+      }
+
       setModal(false);
       showToast(editing ? '✅ Customer updated!' : '✅ Customer added!');
       load(search);
@@ -93,7 +134,16 @@ export default function Customers() {
                     <td style={{color:'var(--text2)',width:40}}>{i+1}</td>
                     <td><strong>{c.name}</strong></td>
                     <td style={{color:'var(--text2)'}}>{c.email || '—'}</td>
-                    <td style={{color:'var(--text2)'}}>{c.phone || '—'}</td>
+                    <td style={{color:'var(--text2)'}}>
+                      {c.contacts && c.contacts.filter(x=>x.type==='phone').length > 0
+                        ? c.contacts.filter(x=>x.type==='phone').map((p,i)=>(
+                            <div key={i} style={{fontSize:i>0?'0.75rem':'0.85rem',color:i>0?'var(--text3)':'var(--text2)'}}>
+                              {p.value}{p.label?<span style={{fontSize:'0.65rem',color:'var(--text3)',marginLeft:4}}>({p.label})</span>:null}
+                            </div>
+                          ))
+                        : c.phone || '—'
+                      }
+                    </td>
                     <td>
                       <span className={`badge ${c.rating==='A'?'badge-yellow':c.rating==='B'?'badge-green':c.rating==='C'?'badge-blue':'badge-gray'}`}>
                         {c.rating==='A'?'⭐⭐⭐⭐':c.rating==='B'?'⭐⭐⭐':c.rating==='C'?'⭐⭐':c.rating==='D'?'⭐':'—'}
@@ -128,21 +178,58 @@ export default function Customers() {
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Full Name *</label>
-                    <input className="form-input" placeholder="John Doe" value={form.name} onChange={f('name')} required autoFocus/>
+                    <input className="form-input" placeholder="Company / Person name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required autoFocus/>
                   </div>
-                  <div className="form-row-2">
-                    <div className="form-group">
-                      <label className="form-label">Email Address</label>
-                      <input className="form-input" type="email" placeholder="john@example.com" value={form.email} onChange={f('email')}/>
+
+                  {/* Phones */}
+                  <div className="form-group">
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'0.4rem'}}>
+                      <label className="form-label" style={{margin:0}}>📞 Phone Numbers</label>
+                      <button type="button" className="btn-ghost btn-sm"
+                        onClick={()=>setForm(f=>({...f,phones:[...f.phones,{value:'',label:''}]}))}>
+                        + Add Phone
+                      </button>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">Phone Number</label>
-                      <input className="form-input" type="tel" placeholder="+91 98765 43210" value={form.phone} onChange={f('phone')}/>
-                    </div>
+                    {form.phones.map((p,i)=>(
+                      <div key={i} style={{display:'flex',gap:'0.4rem',marginBottom:'0.4rem',alignItems:'center'}}>
+                        <input className="form-input" placeholder="Phone number" style={{flex:2}}
+                          value={p.value} onChange={e=>setForm(f=>({...f,phones:f.phones.map((x,j)=>j===i?{...x,value:e.target.value}:x)}))}/>
+                        <input className="form-input" placeholder="Label (Primary/Mobile)" style={{flex:1}}
+                          value={p.label} onChange={e=>setForm(f=>({...f,phones:f.phones.map((x,j)=>j===i?{...x,label:e.target.value}:x)}))}/>
+                        {form.phones.length>1 && (
+                          <button type="button" onClick={()=>setForm(f=>({...f,phones:f.phones.filter((_,j)=>j!==i)}))}
+                            style={{background:'var(--red-dim)',border:'1px solid rgba(220,38,38,0.2)',color:'var(--red)',borderRadius:6,padding:'0.35rem 0.5rem',cursor:'pointer',flexShrink:0}}>✕</button>
+                        )}
+                      </div>
+                    ))}
                   </div>
+
+                  {/* Emails */}
+                  <div className="form-group">
+                    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'0.4rem'}}>
+                      <label className="form-label" style={{margin:0}}>📧 Email Addresses</label>
+                      <button type="button" className="btn-ghost btn-sm"
+                        onClick={()=>setForm(f=>({...f,emails:[...f.emails,{value:'',label:''}]}))}>
+                        + Add Email
+                      </button>
+                    </div>
+                    {form.emails.map((e,i)=>(
+                      <div key={i} style={{display:'flex',gap:'0.4rem',marginBottom:'0.4rem',alignItems:'center'}}>
+                        <input className="form-input" type="email" placeholder="Email address" style={{flex:2}}
+                          value={e.value} onChange={ev=>setForm(f=>({...f,emails:f.emails.map((x,j)=>j===i?{...x,value:ev.target.value}:x)}))}/>
+                        <input className="form-input" placeholder="Label (Primary/Work)" style={{flex:1}}
+                          value={e.label} onChange={ev=>setForm(f=>({...f,emails:f.emails.map((x,j)=>j===i?{...x,label:ev.target.value}:x)}))}/>
+                        {form.emails.length>1 && (
+                          <button type="button" onClick={()=>setForm(f=>({...f,emails:f.emails.filter((_,j)=>j!==i)}))}
+                            style={{background:'var(--red-dim)',border:'1px solid rgba(220,38,38,0.2)',color:'var(--red)',borderRadius:6,padding:'0.35rem 0.5rem',cursor:'pointer',flexShrink:0}}>✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="form-group">
                     <label className="form-label">Notes</label>
-                    <textarea className="form-textarea" placeholder="Any additional notes..." value={form.notes} onChange={f('notes')}/>
+                    <textarea className="form-textarea" placeholder="Any additional notes..." value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
                   </div>
                 </div>
               </div>
