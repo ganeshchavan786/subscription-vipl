@@ -1343,10 +1343,10 @@ app.post('/api/settings/smtp', auth, (req, res) => {
   const { host, port, secure, user, pass, from_name, from_email, alert_7day, alert_1day, alert_expiry, notify_admin } = req.body;
   if (!host || !user) return res.status(400).json({ message: 'SMTP host and username required.' });
 
-  setSetting('smtp_host',       host);
+  setSetting('smtp_host',       host.trim());
   setSetting('smtp_port',       String(port || 587));
   setSetting('smtp_secure',     secure ? '1' : '0');
-  setSetting('smtp_user',       user);
+  setSetting('smtp_user',       user.trim());
   setSetting('smtp_from_name',  from_name  || 'SubTrack Pro');
   setSetting('smtp_from_email', from_email || user);
   setSetting('alert_7day',      alert_7day  !== false ? '1' : '0');
