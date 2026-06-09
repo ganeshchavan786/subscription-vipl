@@ -49,4 +49,8 @@ export const getAtRisk         = ()  => API.get('/reports/at-risk');
 export const getFYReport       = ()  => API.get('/reports/fy');
 export const getFYExpiryReport = ()  => API.get('/reports/fy-expiry');
 
+export const getSmtpSettings  = ()  => API.get('/settings/smtp');
+export const saveSmtpSettings = d   => API.post('/settings/smtp', d);
+export const testSmtpEmail    = d   => API.post('/settings/smtp/test', d);
+
 export default API;

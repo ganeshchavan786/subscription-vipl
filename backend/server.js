@@ -1,13 +1,16 @@
 // server.js — Full Backend: Auth + Products + Customers + Subscriptions
-const express = require('express');
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const express    = require('express');
+const cors       = require('cors');
+const bcrypt     = require('bcryptjs');
+const jwt        = require('jsonwebtoken');
 const { Database } = require('node-sqlite3-wasm');
-const path = require('path');
-const fs = require('fs');
-const multer = require('multer');
-const XLSX = require('xlsx');
+const path       = require('path');
+const fs         = require('fs');
+const multer     = require('multer');
+const XLSX       = require('xlsx');
+const nodemailer = require('nodemailer');
+const cron       = require('node-cron');
+const crypto     = require('crypto');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -98,6 +101,12 @@ db.exec(`
     is_primary  INTEGER DEFAULT 0,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
@@ -1259,6 +1268,230 @@ app.post('/api/import/products', auth, upload.single('file'), (req, res) => {
     console.error(e);
     res.status(500).json({ message: 'Failed to parse Excel file.' });
   }
+});
+
+// ─── ENCRYPTION HELPERS ──────────────────────────────────────────────────────
+const ENCRYPT_KEY = (process.env.ENCRYPT_KEY || 'vipl-subtrack-aes256-secret-key').padEnd(32,'!').slice(0,32);
+const IV_LEN = 16;
+
+function encrypt(text) {
+  if (!text) return '';
+  const iv = crypto.randomBytes(IV_LEN);
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPT_KEY), iv);
+  const enc = Buffer.concat([cipher.update(String(text)), cipher.final()]);
+  return iv.toString('hex') + ':' + enc.toString('hex');
+}
+
+function decrypt(text) {
+  if (!text || !text.includes(':')) return text;
+  try {
+    const [ivHex, encHex] = text.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPT_KEY), iv);
+    const dec = Buffer.concat([decipher.update(Buffer.from(encHex,'hex')), decipher.final()]);
+    return dec.toString();
+  } catch { return ''; }
+}
+
+// ─── SETTINGS HELPERS ────────────────────────────────────────────────────────
+const getSetting = (key) => { const r = db.get('SELECT value FROM app_settings WHERE key=?',[key]); return r?.value; };
+const setSetting = (key, val) => {
+  db.run('INSERT OR REPLACE INTO app_settings(key,value,updated_at) VALUES(?,?,CURRENT_TIMESTAMP)',[key,val]);
+};
+
+function getSmtpConfig() {
+  const host     = getSetting('smtp_host')     || '';
+  const port     = parseInt(getSetting('smtp_port') || '587');
+  const secure   = getSetting('smtp_secure')   === '1';
+  const user     = getSetting('smtp_user')     || '';
+  const passEnc  = getSetting('smtp_pass')     || '';
+  const fromName = getSetting('smtp_from_name')|| 'SubTrack Pro';
+  const fromEmail= getSetting('smtp_from_email')|| user;
+  return { host, port, secure, user, pass: decrypt(passEnc), fromName, fromEmail };
+}
+
+function createTransporter() {
+  const cfg = getSmtpConfig();
+  if (!cfg.host || !cfg.user) return null;
+  return nodemailer.createTransport({
+    host: cfg.host, port: cfg.port, secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.pass },
+  });
+}
+
+// ─── SMTP SETTINGS ROUTES ────────────────────────────────────────────────────
+app.get('/api/settings/smtp', auth, (req, res) => {
+  const cfg = getSmtpConfig();
+  res.json({
+    smtp: {
+      host:       cfg.host,
+      port:       cfg.port,
+      secure:     cfg.secure,
+      user:       cfg.user,
+      pass:       cfg.pass ? '••••••••' : '',
+      from_name:  cfg.fromName,
+      from_email: cfg.fromEmail,
+      alert_7day: getSetting('alert_7day') !== '0',
+      alert_1day: getSetting('alert_1day') !== '0',
+      alert_expiry:getSetting('alert_expiry')!== '0',
+      notify_admin:getSetting('notify_admin')=== '1',
+    }
+  });
+});
+
+app.post('/api/settings/smtp', auth, (req, res) => {
+  const { host, port, secure, user, pass, from_name, from_email, alert_7day, alert_1day, alert_expiry, notify_admin } = req.body;
+  if (!host || !user) return res.status(400).json({ message: 'SMTP host and username required.' });
+
+  setSetting('smtp_host',       host);
+  setSetting('smtp_port',       String(port || 587));
+  setSetting('smtp_secure',     secure ? '1' : '0');
+  setSetting('smtp_user',       user);
+  setSetting('smtp_from_name',  from_name  || 'SubTrack Pro');
+  setSetting('smtp_from_email', from_email || user);
+  setSetting('alert_7day',      alert_7day  !== false ? '1' : '0');
+  setSetting('alert_1day',      alert_1day  !== false ? '1' : '0');
+  setSetting('alert_expiry',    alert_expiry!== false ? '1' : '0');
+  setSetting('notify_admin',    notify_admin ? '1' : '0');
+
+  // Only update password if provided (not masked)
+  if (pass && pass !== '••••••••') {
+    setSetting('smtp_pass', encrypt(pass));
+  }
+
+  res.json({ message: 'SMTP settings saved!' });
+});
+
+app.post('/api/settings/smtp/test', auth, async (req, res) => {
+  const { to } = req.body;
+  if (!to) return res.status(400).json({ message: 'Test email address required.' });
+  const transporter = createTransporter();
+  if (!transporter) return res.status(400).json({ message: 'SMTP not configured. Save settings first.' });
+  try {
+    const cfg = getSmtpConfig();
+    await transporter.sendMail({
+      from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
+      to,
+      subject: '✅ SubTrack Pro — SMTP Test Email',
+      html: `<div style="font-family:sans-serif;padding:20px">
+        <h2 style="color:#635bff">✅ SMTP Configuration Working!</h2>
+        <p>Your SubTrack Pro email notifications are configured correctly.</p>
+        <p style="color:#888;font-size:12px">Sent from SubTrack Pro at ${new Date().toLocaleString()}</p>
+      </div>`,
+    });
+    res.json({ message: 'Test email sent successfully!' });
+  } catch(e) {
+    res.status(500).json({ message: `Failed: ${e.message}` });
+  }
+});
+
+// ─── CRON JOB — Daily Renewal Alerts ─────────────────────────────────────────
+async function sendRenewalAlerts() {
+  const transporter = createTransporter();
+  if (!transporter) return;
+
+  const cfg      = getSmtpConfig();
+  const today    = new Date().toISOString().split('T')[0];
+  const in7      = new Date(); in7.setDate(in7.getDate() + 7);
+  const in7str   = in7.toISOString().split('T')[0];
+  const in1      = new Date(); in1.setDate(in1.getDate() + 1);
+  const in1str   = in1.toISOString().split('T')[0];
+
+  const users = db.all(`SELECT DISTINCT user_id FROM subscriptions`);
+
+  for (const { user_id } of users) {
+    const adminUser = db.get('SELECT email, name FROM users WHERE id=?', [user_id]);
+
+    // 7-day alerts
+    if (getSetting('alert_7day') !== '0') {
+      const subs7 = db.all(`
+        SELECT s.*, c.name as customer_name, c.email as customer_email, p.name as product_name
+        FROM subscriptions s JOIN customers c ON s.customer_id=c.id JOIN products p ON s.product_id=p.id
+        WHERE s.user_id=? AND s.end_date=? AND s.status='active'
+      `, [user_id, in7str]);
+
+      for (const s of subs7) {
+        await sendRenewalEmail(transporter, cfg, s, 7, adminUser);
+      }
+    }
+
+    // 1-day alerts
+    if (getSetting('alert_1day') !== '0') {
+      const subs1 = db.all(`
+        SELECT s.*, c.name as customer_name, c.email as customer_email, p.name as product_name
+        FROM subscriptions s JOIN customers c ON s.customer_id=c.id JOIN products p ON s.product_id=p.id
+        WHERE s.user_id=? AND s.end_date=? AND s.status='active'
+      `, [user_id, in1str]);
+
+      for (const s of subs1) {
+        await sendRenewalEmail(transporter, cfg, s, 1, adminUser);
+      }
+    }
+
+    // Expiry day alerts
+    if (getSetting('alert_expiry') !== '0') {
+      const subsExp = db.all(`
+        SELECT s.*, c.name as customer_name, c.email as customer_email, p.name as product_name
+        FROM subscriptions s JOIN customers c ON s.customer_id=c.id JOIN products p ON s.product_id=p.id
+        WHERE s.user_id=? AND s.end_date=? AND s.status='active'
+      `, [user_id, today]);
+
+      for (const s of subsExp) {
+        await sendRenewalEmail(transporter, cfg, s, 0, adminUser);
+      }
+    }
+  }
+}
+
+async function sendRenewalEmail(transporter, cfg, sub, daysLeft, adminUser) {
+  const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
+  const subject = daysLeft === 0
+    ? `⚠️ Subscription Expired Today — ${sub.customer_name}`
+    : `🔔 Subscription expiring in ${daysLeft} day${daysLeft>1?'s':''} — ${sub.customer_name}`;
+
+  const html = `
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto;background:#f6f8fa;padding:24px">
+      <div style="background:white;border-radius:12px;padding:24px;border:1px solid #e2e8f0">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
+          <span style="font-size:24px">${daysLeft===0?'⚠️':'🔔'}</span>
+          <h2 style="margin:0;color:#0f172a;font-size:18px">Subscription ${daysLeft===0?'Expired':'Expiring Soon'}</h2>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr style="background:#f6f8fa"><td style="padding:8px 12px;color:#64748b;font-weight:600">Customer</td><td style="padding:8px 12px;font-weight:700">${sub.customer_name}</td></tr>
+          <tr><td style="padding:8px 12px;color:#64748b;font-weight:600">Service</td><td style="padding:8px 12px">${sub.product_name}</td></tr>
+          <tr style="background:#f6f8fa"><td style="padding:8px 12px;color:#64748b;font-weight:600">Amount</td><td style="padding:8px 12px;font-weight:700;color:#635bff">${fmt(sub.price)}</td></tr>
+          <tr><td style="padding:8px 12px;color:#64748b;font-weight:600">End Date</td><td style="padding:8px 12px;color:${daysLeft===0?'#dc2626':'#d97706'};font-weight:600">${sub.end_date}</td></tr>
+          <tr style="background:#f6f8fa"><td style="padding:8px 12px;color:#64748b;font-weight:600">Status</td><td style="padding:8px 12px">${daysLeft===0?'<span style="color:#dc2626">Expired Today</span>':`<span style="color:#d97706">${daysLeft} day${daysLeft>1?'s':''} remaining</span>`}</td></tr>
+        </table>
+        <div style="margin-top:20px;padding:12px;background:#f0f4ff;border-radius:8px;font-size:13px;color:#475569">
+          Please renew this subscription to avoid service interruption.
+        </div>
+        <p style="font-size:11px;color:#94a3b8;margin-top:16px">SubTrack Pro — Automated Renewal Alert</p>
+      </div>
+    </div>`;
+
+  const recipients = [];
+  if (sub.customer_email) recipients.push(sub.customer_email);
+  if (getSetting('notify_admin') === '1' && adminUser?.email) recipients.push(adminUser.email);
+  if (recipients.length === 0) return;
+
+  try {
+    await transporter.sendMail({
+      from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
+      to: recipients.join(','),
+      subject,
+      html,
+    });
+    console.log(`✅ Alert sent: ${sub.customer_name} — ${daysLeft}d`);
+  } catch(e) {
+    console.error(`❌ Alert failed: ${sub.customer_name} —`, e.message);
+  }
+}
+
+// Run daily at 9:00 AM
+cron.schedule('0 9 * * *', () => {
+  console.log('🕐 Running renewal alerts cron...');
+  sendRenewalAlerts().catch(e => console.error('Cron error:', e));
 });
 
 app.listen(PORT, () => console.log(`🚀 Server running: http://localhost:${PORT}`));
