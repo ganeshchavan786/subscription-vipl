@@ -1369,6 +1369,7 @@ app.post('/api/settings/smtp/test', auth, async (req, res) => {
   if (!transporter) return res.status(400).json({ message: 'SMTP not configured. Save settings first.' });
   try {
     const cfg = getSmtpConfig();
+    await transporter.verify();
     await transporter.sendMail({
       from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
       to,
@@ -1381,7 +1382,8 @@ app.post('/api/settings/smtp/test', auth, async (req, res) => {
     });
     res.json({ message: 'Test email sent successfully!' });
   } catch(e) {
-    res.status(500).json({ message: `Failed: ${e.message}` });
+    console.error('SMTP Test Error:', e.message);
+    res.status(500).json({ message: `SMTP Error: ${e.message}` });
   }
 });
 
