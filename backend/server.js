@@ -247,7 +247,28 @@ app.get('/api/customers', auth, (req, res) => {
   let q = 'SELECT * FROM customers WHERE user_id=?';
   const p = [req.user.id];
   if (search) { q += ' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)'; p.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-  res.json({ customers: db.all(q + ' ORDER BY name', p) });
+  const customers = db.all(q + ' ORDER BY name', p);
+
+  // Add revenue + rating to each customer
+  const revenues = customers.map(c => {
+    const rev = db.get('SELECT COALESCE(SUM(price),0) as r FROM subscriptions WHERE user_id=? AND customer_id=?', [req.user.id, c.id]);
+    return { id: c.id, rev: rev?.r || 0 };
+  });
+  const sorted = [...revenues].sort((a,b) => b.rev - a.rev);
+  const total = sorted.length;
+
+  const getRating = (rev) => {
+    const rank = sorted.findIndex(r => r.id !== -1 && r.rev <= rev);
+    const pct = total > 0 ? (sorted.findIndex(r => r.rev === rev) + 1) / total : 1;
+    return pct <= 0.25 ? 'A' : pct <= 0.5 ? 'B' : pct <= 0.75 ? 'C' : 'D';
+  };
+
+  const result = customers.map(c => {
+    const rev = revenues.find(r => r.id === c.id)?.rev || 0;
+    return { ...c, total_revenue: rev, rating: total > 0 ? getRating(rev) : null };
+  });
+
+  res.json({ customers: result });
 });
 
 app.post('/api/customers', auth, (req, res) => {
@@ -295,6 +316,126 @@ app.delete('/api/customers/:id', auth, (req, res) => {
   if (!exists) return res.status(404).json({ message: 'Customer not found.' });
   db.run('DELETE FROM customers WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
   res.json({ message: 'Deleted.' });
+});
+
+// Customer Profile — full history + FY analysis + rating
+app.get('/api/customers/:id/profile', auth, (req, res) => {
+  const uid = req.user.id;
+  const cid = req.params.id;
+
+  const customer = db.get('SELECT * FROM customers WHERE id=? AND user_id=?', [cid, uid]);
+  if (!customer) return res.status(404).json({ message: 'Customer not found.' });
+
+  syncStatus();
+
+  // All subscriptions for this customer
+  const subs = db.all(`
+    SELECT s.*, p.name as product_name
+    FROM subscriptions s
+    JOIN products p ON s.product_id = p.id
+    WHERE s.user_id=? AND s.customer_id=?
+    ORDER BY s.transaction_date ASC, s.start_date ASC
+  `, [uid, cid]);
+
+  // Summary stats
+  const totalRevenue  = subs.reduce((sum, s) => sum + (s.price || 0), 0);
+  const paidRevenue   = subs.filter(s => s.payment_status === 'paid').reduce((sum, s) => sum + (s.price||0), 0);
+  const unpaidRevenue = subs.filter(s => s.payment_status !== 'paid').reduce((sum, s) => sum + (s.price||0), 0);
+  const activeCount   = subs.filter(s => s.status === 'active').length;
+  const totalSubs     = subs.length;
+  const firstDate     = subs.length > 0 ? (subs[0].transaction_date || subs[0].start_date) : null;
+  const uniqueProducts= [...new Set(subs.map(s => s.product_id))].length;
+
+  // FY grouping (Apr-Mar)
+  const getFYStart = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    const m = d.getMonth(), y = d.getFullYear();
+    return m >= 3 ? y : y - 1;
+  };
+
+  // Product-wise FY history
+  const productMap = {};
+  for (const s of subs) {
+    const pid = s.product_id;
+    if (!productMap[pid]) {
+      productMap[pid] = { product_id: pid, product_name: s.product_name, subs: [], total_revenue: 0 };
+    }
+    productMap[pid].subs.push(s);
+    productMap[pid].total_revenue += s.price || 0;
+  }
+
+  const currentFYStart = getFYStart(new Date().toISOString().split('T')[0]);
+  const firstFYStart   = firstDate ? getFYStart(firstDate) : currentFYStart;
+
+  // All FY years from first to current
+  const allFYs = [];
+  for (let y = firstFYStart; y <= currentFYStart; y++) allFYs.push(y);
+
+  const productHistory = Object.values(productMap).map(prod => {
+    const fyMap = {};
+    for (const s of prod.subs) {
+      const fy = getFYStart(s.transaction_date || s.start_date);
+      if (!fyMap[fy]) fyMap[fy] = { fy, subs: [], revenue: 0, status: s.status };
+      fyMap[fy].subs.push(s);
+      fyMap[fy].revenue += s.price || 0;
+      fyMap[fy].status = s.status; // latest status
+    }
+    const timeline = allFYs.map(fy => ({
+      fy,
+      fy_label: `FY ${fy}-${String(fy+1).slice(2)}`,
+      found: !!fyMap[fy],
+      revenue: fyMap[fy]?.revenue || 0,
+      status: fyMap[fy]?.status || 'missed',
+      subs: fyMap[fy]?.subs || [],
+    }));
+    const missedFYs = timeline.filter(t => !t.found).length;
+    const activeFYs = timeline.filter(t => t.found).length;
+    return { ...prod, timeline, missed_fys: missedFYs, active_fys: activeFYs };
+  }).sort((a, b) => b.total_revenue - a.total_revenue);
+
+  // FY summary (all products combined)
+  const fyRevMap = {};
+  for (const s of subs) {
+    const fy = getFYStart(s.transaction_date || s.start_date);
+    if (!fyRevMap[fy]) fyRevMap[fy] = { fy, revenue: 0, count: 0, paid: 0, unpaid: 0, subs: [] };
+    fyRevMap[fy].revenue += s.price || 0;
+    fyRevMap[fy].count++;
+    fyRevMap[fy].subs.push(s);
+    if (s.payment_status === 'paid') fyRevMap[fy].paid += s.price || 0;
+    else fyRevMap[fy].unpaid += s.price || 0;
+  }
+  const fyHistory = allFYs.map(fy => ({
+    fy,
+    fy_label: `FY ${fy}-${String(fy+1).slice(2)}`,
+    found: !!fyRevMap[fy],
+    revenue: fyRevMap[fy]?.revenue || 0,
+    count: fyRevMap[fy]?.count || 0,
+    paid: fyRevMap[fy]?.paid || 0,
+    unpaid: fyRevMap[fy]?.unpaid || 0,
+    subs: fyRevMap[fy]?.subs || [],
+    status: fyRevMap[fy] ? 'active' : 'missed',
+  }));
+
+  // Rating — based on total revenue vs all customers
+  const allRevenues = db.all(
+    `SELECT SUM(price) as rev FROM subscriptions WHERE user_id=? GROUP BY customer_id ORDER BY rev DESC`,
+    [uid]
+  ).map(r => r.rev || 0);
+  const rank = allRevenues.findIndex(r => r <= totalRevenue) + 1;
+  const pct  = allRevenues.length > 0 ? rank / allRevenues.length : 1;
+  const rating = pct <= 0.25 ? 'A' : pct <= 0.5 ? 'B' : pct <= 0.75 ? 'C' : 'D';
+  const ratingLabel = { A:'⭐⭐⭐⭐ Gold', B:'⭐⭐⭐ Silver', C:'⭐⭐ Bronze', D:'⭐ Basic' };
+
+  res.json({
+    customer,
+    stats: { totalRevenue, paidRevenue, unpaidRevenue, activeCount, totalSubs, firstDate, uniqueProducts },
+    rating, ratingLabel: ratingLabel[rating],
+    productHistory,
+    fyHistory,
+    allFYs,
+    subs,
+  });
 });
 
 // ─── SUBSCRIPTIONS CRUD ───────────────────────────────────────────────────────

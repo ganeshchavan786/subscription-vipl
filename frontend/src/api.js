@@ -32,6 +32,7 @@ export const getCustomers      = (s) => API.get('/customers', { params: s ? { se
 export const createCustomer    = d => API.post('/customers', d);
 export const updateCustomer    = (id, d) => API.put(`/customers/${id}`, d);
 export const deleteCustomer    = id => API.delete(`/customers/${id}`);
+export const getCustomerProfile= id => API.get(`/customers/${id}/profile`);
 
 export const getSubscriptions  = (p) => API.get('/subscriptions', { params: p || {} });
 export const createSubscription= d => API.post('/subscriptions', d);

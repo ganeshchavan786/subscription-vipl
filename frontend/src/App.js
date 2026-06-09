@@ -11,6 +11,7 @@ import Subscriptions from './pages/Subscriptions';
 import Reports       from './pages/Reports';
 import FYReport      from './pages/FYReport';
 import FYExpiryReport from './pages/FYExpiryReport';
+import CustomerProfile from './pages/CustomerProfile';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/register"      element={<Register />} />
           <Route path="/dashboard"     element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/customers"     element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+          <Route path="/customers/:id" element={<ProtectedRoute><CustomerProfile /></ProtectedRoute>} />
           <Route path="/products"      element={<ProtectedRoute><Products /></ProtectedRoute>} />
           <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
           <Route path="/reports"       element={<ProtectedRoute><Reports /></ProtectedRoute>} />

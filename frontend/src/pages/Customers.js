@@ -3,6 +3,7 @@ import Layout from '../components/Layout';
 import { Toast, ConfirmModal, useToast } from '../components/Shared';
 import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '../api';
 import ImportModal from '../components/ImportModal';
+import { useNavigate } from 'react-router-dom';
 
 const EMPTY = { name:'', email:'', phone:'', notes:'' };
 
@@ -18,6 +19,7 @@ export default function Customers() {
   const [deleteId, setDeleteId] = useState(null);
   const [toast, showToast] = useToast();
   const [importOpen, setImportOpen] = useState(false);
+  const navigate = useNavigate();
 
   const load = useCallback(async (q='') => {
     try { const r = await getCustomers(q); setCustomers(r.data.customers); }
@@ -84,7 +86,7 @@ export default function Customers() {
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Phone</th><th>Notes</th><th>Actions</th></tr></thead>
+              <thead><tr><th>#</th><th>Name</th><th>Email</th><th>Phone</th><th>Rating</th><th>Notes</th><th>Actions</th></tr></thead>
               <tbody>
                 {customers.map((c,i) => (
                   <tr key={c.id}>
@@ -92,8 +94,15 @@ export default function Customers() {
                     <td><strong>{c.name}</strong></td>
                     <td style={{color:'var(--text2)'}}>{c.email || '—'}</td>
                     <td style={{color:'var(--text2)'}}>{c.phone || '—'}</td>
+                    <td>
+                      <span className={`badge ${c.rating==='A'?'badge-yellow':c.rating==='B'?'badge-green':c.rating==='C'?'badge-blue':'badge-gray'}`}>
+                        {c.rating==='A'?'⭐⭐⭐⭐':c.rating==='B'?'⭐⭐⭐':c.rating==='C'?'⭐⭐':c.rating==='D'?'⭐':'—'}
+                        {c.rating ? ` ${c.rating}` : ''}
+                      </span>
+                    </td>
                     <td style={{color:'var(--text2)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.notes || '—'}</td>
                     <td><div className="td-actions">
+                      <button className="btn-ghost btn-sm" title="Customer Dashboard" onClick={()=>navigate(`/customers/${c.id}`)}>📊</button>
                       <button className="btn-edit" onClick={()=>openEdit(c)}>✏️ Edit</button>
                       <button className="btn-del"  onClick={()=>setDeleteId(c.id)}>🗑️</button>
                     </div></td>
